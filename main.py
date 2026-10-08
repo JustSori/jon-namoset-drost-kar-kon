@@ -159,15 +159,39 @@ def run_search(query: str):
     return out
 
 def run_download(url: str, out_path: str):
-    cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "192K", "--no-playlist", "--no-warnings", "-o", out_path, url]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
-    if not os.path.exists(out_path):
-        base = out_path.rsplit(".", 1)[0]
-        for f in os.listdir("."):
-            if f.startswith(os.path.basename(base)):
-                return os.path.join(".", f)
-        raise RuntimeError("دانلود ناموفق بود.")
-    return out_path
+    base = os.path.splitext(out_path)[0]
+    template = base + ".%(ext)s"
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "192K",
+        "-o", template,
+        url,
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=180,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("yt-dlp نصب نیست یا در PATH قرار ندارد.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("زمان دانلود تمام شد؛ دوباره تلاش کن.") from exc
+
+    final_path = base + ".mp3"
+    if result.returncode != 0 or not os.path.isfile(final_path):
+        error = (result.stderr or result.stdout or "خطای نامشخص از yt-dlp").strip()
+        raise RuntimeError(error[-1200:])
+
+    return final_path
 
 async def fix_thumb(src: str, dst: str) -> bool:
     cmd = ["ffmpeg", "-y", "-i", src, "-vf", "scale=320:320:force_original_aspect_ratio=increase,crop=320:320", "-q:v", "3", dst]
