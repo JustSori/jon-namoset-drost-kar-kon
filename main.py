@@ -1,9 +1,11 @@
 import asyncio
 import os
+import json
 import subprocess
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, FSInputFile
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
@@ -12,143 +14,464 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN ست نشده!")
 
+ADMIN_IDS = set()
+for x in os.getenv("ADMIN_ID", "").split(","):
+    x = x.strip()
+    if x.isdigit():
+        ADMIN_IDS.add(int(x))
+
+WATERMARK_SOUND = os.getenv("WATERMARK", "on")
+
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 user_files = {}
+user_settings = {}
+awaiting = {}
+broadcast_mode = set()
+BOT_USERNAME = ""
+USERS_FILE = "users.json"
 
+def load_users():
+    try:
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r") as f:
+                d = json.load(f)
+                return set(d.get("ids", [])), d.get("dates", {})
+    except:
+        pass
+    return set(), {}
+
+def save_users():
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump({"ids": list(all_users), "dates": first_seen}, f)
+    except:
+        pass
+
+all_users, first_seen = load_users()
+
+def is_admin(uid: int) -> bool:
+    return uid in ADMIN_IDS
+
+def add_user(uid: int):
+    s = str(uid)
+    if uid not in all_users:
+        all_users.add(uid)
+        first_seen[s] = datetime.now().strftime("%Y-%m-%d")
+        save_users()
+
+def get_settings(uid: int):
+    if uid not in user_settings:
+        user_settings[uid] = {"artist": None, "cover": None}
+    return user_settings[uid]
+
+# ─── یونیک دیزاین ───
 def get_buttons():
-    buttons = [
-        [InlineKeyboardButton(text="🐌 Slowed 0.8x", callback_data="slowed"),
-         InlineKeyboardButton(text="🎧 Slowed + Reverb", callback_data="slowed_reverb")],
-        [InlineKeyboardButton(text="🌃 Nightcore", callback_data="nightcore"),
-         InlineKeyboardButton(text="⚡ Speed Up 1.25x", callback_data="speedup")],
-        [InlineKeyboardButton(text="🔊 Bass Boost", callback_data="bass"),
-         InlineKeyboardButton(text="🌊 Reverb Only", callback_data="reverb")],
-        [InlineKeyboardButton(text="🎩 8D", callback_data="8d")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🐌 𝚂ʟᴏᴡᴇᴅ", callback_data="fx:slowed"),
+         InlineKeyboardButton(text="🎧 𝚂ʟᴏᴡᴇᴅ + ʀᴇᴠᴇʀʙ", callback_data="fx:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 Nɪɢʜᴛᴄᴏʀᴇ", callback_data="fx:nightcore"),
+         InlineKeyboardButton(text="⚡ Sᴘᴇᴇᴅ Uᴘ", callback_data="fx:speedup")],
+        [InlineKeyboardButton(text="🔊 Bᴀss Bᴏᴏsᴛ", callback_data="fx:bass"),
+         InlineKeyboardButton(text="🌊 Rᴇᴠᴇʀʙ", callback_data="fx:reverb")],
+        [InlineKeyboardButton(text="🎩 𝟾𝙳", callback_data="fx:8d")],
+        [InlineKeyboardButton(text="✎ ᴀʀᴛɪsᴛ", callback_data="set_artist"),
+         InlineKeyboardButton(text="◍ ᴄᴏᴠᴇʀ", callback_data="set_cover")],
+    ])
+
+def get_chain_buttons():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🐌 𝚂ʟᴏᴡᴇᴅ", callback_data="chain:slowed"),
+         InlineKeyboardButton(text="🎧 𝚂ʟᴏᴡᴇᴅ + ʀᴇᴠᴇʀʙ", callback_data="chain:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 Nɪɢʜᴛᴄᴏʀᴇ", callback_data="chain:nightcore"),
+         InlineKeyboardButton(text="⚡ Sᴘᴇᴇᴅ Uᴘ", callback_data="chain:speedup")],
+        [InlineKeyboardButton(text="🔊 Bᴀss Bᴏᴏsᴛ", callback_data="chain:bass"),
+         InlineKeyboardButton(text="🌊 Rᴇᴠᴇʀʙ", callback_data="chain:reverb")],
+        [InlineKeyboardButton(text="🎩 𝟾𝙳", callback_data="chain:8d")],
+        [InlineKeyboardButton(text="✓ ᴅᴏɴᴇ ─ تحویل بده", callback_data="chain_done")],
+    ])
+
+def get_admin_panel():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◍ sᴛᴀᴛs ─ آمار", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="✉ ʙʀᴏᴀᴅᴄᴀsᴛ ─ همگانی", callback_data="admin_broadcast")]
+    ])
+
+def get_share_kb():
+    if BOT_USERNAME:
+        url = f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}&text=این آهنگو با این ربات درست کردم 🎧"
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↗ sʜᴀʀᴇ", url=url)],
+            [InlineKeyboardButton(text="♫ ᴍᴀᴋᴇ ɴᴇᴡ", url=f"https://t.me/{BOT_USERNAME}")]
+        ])
+    return None
+
+SUFFIX = {"slowed": "(slowed)", "slowed_reverb": "(slowed + reverb)", "speedup": "(speed up)", "nightcore": "(nightcore)", "bass": "(bass boosted)", "reverb": "(reverb)", "8d": "(8d)"}
+FILTERS = {
+    "slowed": "asetrate=44100*0.85,aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11,volume=1.1",
+    "slowed_reverb": "asetrate=44100*0.85,aresample=44100,aecho=0.8:0.9:150:0.32,aecho=0.8:0.7:500:0.25,bass=g=4:f=110:w=0.6,volume=1.15,loudnorm=I=-16:TP=-1.5:LRA=11",
+    "speedup": "atempo=1.20,aresample=44100,loudnorm",
+    "nightcore": "asetrate=44100*1.20,aresample=44100,volume=1.1",
+    "bass": "bass=g=8:f=110:w=0.6,volume=1.2,aresample=44100",
+    "reverb": "aecho=0.8:0.88:120:0.35,aecho=0.8:0.6:400:0.25,aresample=44100,volume=1.1",
+    "8d": "extrastereo=m=1.6,apulsator=hz=0.15,aresample=44100"
+}
+EFFECT_EMOJI = {"slowed": "🐌", "slowed_reverb": "🎧", "speedup": "⚡", "nightcore": "🌃", "bass": "🔊", "reverb": "🌊", "8d": "🎩"}
+EFFECT_TITLE_FA = {"slowed": "اسلو", "slowed_reverb": "اسلو + ریورب", "speedup": "اسپید آپ", "nightcore": "نایتکور", "bass": "بیس بوست", "reverb": "ریورب", "8d": "هشت‌بعدی"}
+EFFECT_STYLED = {"slowed": "𝚂ʟᴏᴡᴇᴅ", "slowed_reverb": "𝚂ʟᴏᴡᴇᴅ + ʀᴇᴠᴇʀʙ", "speedup": "Sᴘᴇᴇᴅ Uᴘ", "nightcore": "Nɪɢʜᴛᴄᴏʀᴇ", "bass": "Bᴀss Bᴏᴏsᴛ", "reverb": "Rᴇᴠᴇʀʙ", "8d": "𝟾𝙳"}
+
+def format_time(s: int) -> str:
+    try:
+        s = int(s or 0)
+    except:
+        s = 0
+    return f"{s // 60:02d}:{s % 60:02d}"
+
+def calc_duration(base: int, effect: str) -> int:
+    if effect in ["slowed", "slowed_reverb"]:
+        return int((base or 0) / 0.85) if base else 0
+    if effect in ["speedup", "nightcore"]:
+        return int((base or 0) / 1.2) if base else 0
+    return base or 0
+
+async def fix_thumb(src: str, dst: str) -> bool:
+    cmd = ["ffmpeg", "-y", "-i", src, "-vf", "scale=320:320:force_original_aspect_ratio=increase,crop=320:320", "-q:v", "3", dst]
+    await asyncio.to_thread(subprocess.run, cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(dst):
+        try:
+            if os.path.getsize(dst) > 190 * 1024:
+                tmp = dst + ".tmp.jpg"
+                await asyncio.to_thread(subprocess.run, ["ffmpeg", "-y", "-i", dst, "-vf", "scale=320:320", "-q:v", "8", tmp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.exists(tmp):
+                    os.replace(tmp, dst)
+        except:
+            pass
+        return True
+    return False
+
+async def apply_effect_to_file(in_path: str, out_path: str, effect: str):
+    cmd = ["ffmpeg", "-y", "-i", in_path, "-filter:a", FILTERS[effect], "-ar", "44100", "-ac", "2", "-c:a", "libmp3lame", "-b:a", "192k", out_path]
+    await asyncio.to_thread(subprocess.run, cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if not os.path.exists(out_path):
+        raise RuntimeError("خطا در پردازش فایل.")
+
+async def add_audio_watermark(in_path: str, out_path: str):
+    if WATERMARK_SOUND == "off":
+        if in_path != out_path:
+            try:
+                os.replace(in_path, out_path)
+            except:
+                pass
+        return
+    wm = out_path + ".wm.mp3"
+    cmd = ["ffmpeg", "-y", "-i", in_path, "-filter:a", "sine=frequency=880:duration=0.25:beep_factor=2,volume=0.12[beep];[0:a][beep]amix=inputs=2:duration=first:dropout_transition=0:weights=10 1,aresample=44100,aecho=0.8:0.3:40:0.15", "-c:a", "libmp3lame", "-b:a", "192k", wm]
+    await asyncio.to_thread(subprocess.run, cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(wm):
+        try:
+            os.replace(wm, out_path)
+        except:
+            pass
+
+START_TXT = (
+    "╭─── <b>♫ ᴍᴜsɪᴄ ᴇғғᴇᴄᴛs</b> ───╮\n"
+    "│ سلام، خوش اومدی ✦\n"
+    "│ یه ترک بفرست، نسخه جدیدشو بگیر.\n"
+    "╰───────────────╯\n\n"
+    "◍ <b>ᴇғғᴇᴄᴛs :</b>\n"
+    "🐌 𝚂ʟᴏᴡᴇᴅ ┆ 🎧 𝚂ʟᴏᴡᴇᴅ + ʀᴇᴠᴇʀʙ\n"
+    "🌃 Nɪɢʜᴛᴄᴏʀᴇ ┆ ⚡ Sᴘᴇᴇᴅ Uᴘ\n"
+    "🔊 Bᴀss Bᴏᴏsᴛ ┆ 🌊 Rᴇᴠᴇʀʙ ┆ 🎩 𝟾𝙳\n\n"
+    "─ ─ ─ ─ ─ ─ ─ ─\n"
+    "🔗 ᴄʜᴀɪɴ افکت‌ها ┆ ◍ ᴄᴏᴠᴇʀ و ᴀʀᴛɪsᴛ دلخواه\n"
+    "👇 ─ یه موزیک بفرست"
+)
+
+HELP_TXT = (
+    "╭── <b>◍ ʜᴇʟᴘ</b> ──╮\n"
+    "│ 𝟷 ─ ترک رو بفرست 🎵\n"
+    "│ 𝟸 ─ افکت رو بزن 🎛️\n"
+    "│ 𝟹 ─ افکت بعدی؟ یا تحویل 🔗\n"
+    "│ 𝟺 ─ با ↗ sʜᴀʀᴇ پخشش کن\n"
+    "╰──────────╯\n"
+    "<i>ғᴏʀᴍᴀᴛs : ᴍᴘ𝟹 ┆ ᴍ𝟺ᴀ ┆ ᴡᴀᴠ ┆ ᴏɢɢ ┆ ғʟᴀᴄ</i>"
+)
 
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
-    name = message.from_user.first_name
-    await message.reply(
-        f"👋 سلام <b>{name}</b> عزیز!\n\n"
-        f"به <b>🎧 ربات افکت موزیک</b> خوش اومدی\n"
-        f"<blockquote>جایی که آهنگات یه وایب جدید می‌گیرن ✨</blockquote>\n\n"
-        f"🎵 فقط کافیه یه آهنگ بفرستی...\n\n"
-        f"<b>افکت‌هایی که دارم:</b>\n"
-        f"🐌 اسلو | 🎧 اسلو + ریورب\n"
-        f"🌃 نایتکور | ⚡ تند\n"
-        f"🔊 بیس بوست | 🌊 ریورب | 🎩 هشت‌بعدی\n\n"
-        f"<i>👇 بزن بریم، یه موزیک بفرست</i>"
-    )
+    add_user(message.from_user.id)
+    await message.reply(START_TXT)
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
-    await message.reply(
-        f"<b>📖 راهنمای ربات</b>\n"
-        f"<blockquote expandable>اگه گیج شدی فقط این ۳ قدم رو برو:</blockquote>\n\n"
-        f"1️⃣ یه فایل <b>موزیک mp3</b> بفرست 🎵\n"
-        f"2️⃣ یه دکمه افکت انتخاب کن 🎛️\n"
-        f"3️⃣ چند ثانیه صبر کن تا نسخه جدید بیاد ⚡\n\n"
-        f"<i>💡 اگه بات جواب نداد یه بار /start بزن</i>"
-    )
+    await message.reply(HELP_TXT)
+
+@dp.message(Command("admin"))
+async def admin_cmd(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.reply(f"╭── <b>◍ ᴀᴅᴍɪɴ ᴘᴀɴᴇʟ</b> ──╮\n│ 👥 ᴜsᴇʀs : <b>{len(all_users)}</b>\n╰──────────╯", reply_markup=get_admin_panel())
+
+@dp.callback_query(F.data.startswith("admin_"))
+async def admin_callback(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("دسترسی نداری.", show_alert=True)
+        return
+    await callback.answer()
+    if callback.data == "admin_stats":
+        today = datetime.now().strftime("%Y-%m-%d")
+        tc = sum(1 for v in first_seen.values() if v == today)
+        await callback.message.edit_text(f"◍ <b>sᴛᴀᴛs</b>\n─ ─ ─\n👥 ᴛᴏᴛᴀʟ : <b>{len(all_users)}</b>\n✦ ᴛᴏᴅᴀʏ : <b>{tc}</b>", reply_markup=get_admin_panel())
+    elif callback.data == "admin_broadcast":
+        broadcast_mode.add(callback.from_user.id)
+        await callback.message.edit_text("✉ <b>ʙʀᴏᴀᴅᴄᴀsᴛ ᴍᴏᴅᴇ ᴏɴ</b>\n─ ─ ─\nپیامت رو بفرست.\n<i>ʟɢᴏ : /cancel</i>")
+
+@dp.message(Command("cancel"))
+async def cancel_cmd(message: types.Message):
+    broadcast_mode.discard(message.from_user.id)
+    awaiting.pop(message.from_user.id, None)
+    await message.reply("─ ʟɢᴏ ✓ ─")
+
+@dp.callback_query(F.data == "set_artist")
+async def ask_artist(callback: types.CallbackQuery):
+    await callback.answer()
+    awaiting[callback.from_user.id] = "artist"
+    await callback.message.reply("✎ <b>ᴀʀᴛɪsᴛ ɴᴀᴍᴇ ؟</b>\n─ ─ ─\nاسم آرتیست رو بفرست.\n<i>ʟɢᴏ : /cancel</i>")
+
+@dp.callback_query(F.data == "set_cover")
+async def ask_cover(callback: types.CallbackQuery):
+    await callback.answer()
+    awaiting[callback.from_user.id] = "cover"
+    await callback.message.reply("◍ <b>ᴄᴏᴠᴇʀ ؟</b>\n─ ─ ─\nعکس کاور رو بفرست.\n<i>ʟɢᴏ : /cancel</i>")
+
+@dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    uid = message.from_user.id
+    if uid in broadcast_mode and is_admin(uid):
+        await do_broadcast(message)
+        return
+    if awaiting.get(uid) == "cover":
+        get_settings(uid)["cover"] = message.photo[-1].file_id
+        awaiting.pop(uid, None)
+        await message.reply("◍ <b>ᴄᴏᴠᴇʀ sᴀᴠᴇᴅ ✓</b>\n─ حالا افکت رو بزن 👇", reply_markup=get_buttons())
+
+@dp.message(F.text)
+async def handle_text(message: types.Message):
+    uid = message.from_user.id
+    if uid in broadcast_mode and is_admin(uid):
+        if not message.text.startswith("/"):
+            await do_broadcast(message)
+        return
+    if awaiting.get(uid) == "artist":
+        get_settings(uid)["artist"] = message.text.strip()[:100]
+        awaiting.pop(uid, None)
+        await message.reply("✎ <b>ᴀʀᴛɪsᴛ sᴀᴠᴇᴅ ✓</b>\n─ حالا افکت رو بزن 👇", reply_markup=get_buttons())
 
 @dp.message(F.audio | F.voice | F.document)
 async def handle_music(message: types.Message):
-    file_id = None
+    if message.from_user.id in broadcast_mode and is_admin(message.from_user.id):
+        await do_broadcast(message)
+        return
+    file_id = title = performer = duration = thumb_id = None
     file_name = "music.mp3"
     if message.audio:
         file_id = message.audio.file_id
+        title = message.audio.title
+        performer = message.audio.performer
+        duration = message.audio.duration
         file_name = message.audio.file_name or "music.mp3"
+        if message.audio.thumbnail:
+            thumb_id = message.audio.thumbnail.file_id
     elif message.voice:
         file_id = message.voice.file_id
+        duration = message.voice.duration
+        file_name = "voice.ogg"
     elif message.document:
-        if "audio" in (message.document.mime_type or ""):
+        fname = message.document.file_name or ""
+        mime = message.document.mime_type or ""
+        if "audio" in mime or fname.lower().endswith((".mp3", ".m4a", ".wav", ".ogg", ".flac", ".mp4", ".wma")):
             file_id = message.document.file_id
-
+            file_name = fname or "music.mp3"
+            if message.document.thumbnail:
+                thumb_id = message.document.thumbnail.file_id
     if not file_id:
-        await message.reply(
-            "⚠️ <b>این فایل موزیک نیست!</b>\n"
-            "<blockquote>لطفاً یه فایل mp3 بفرست 🎵</blockquote>"
-        )
+        await message.reply("✕ ─ فایل صوتی نیست 🎵")
         return
+    st = get_settings(message.from_user.id)
+    user_files[message.from_user.id] = {"file_id": file_id, "title": title, "performer": performer, "duration": duration, "thumb_id": thumb_id, "file_name": file_name, "effects": [], "chain_path": None, "base_title": title or os.path.splitext(file_name)[0], "base_duration": duration or 0}
+    show_name = title or os.path.splitext(file_name)[0]
+    extra = ""
+    if st.get("artist"):
+        extra += f"\n✎ ᴀʀᴛɪsᴛ : <b>{st['artist']}</b>"
+    if st.get("cover"):
+        extra += "\n◍ ᴄᴏᴠᴇʀ : <b>ᴏɴ ✓</b>"
+    await message.reply(f"╭── <b>✓ ʀᴇᴄᴇɪᴠᴇᴅ</b> ──╮\n│ ♫ <b>{show_name}</b>{extra}\n╰──────────╯\n─ افکت رو انتخاب کن 👇\n<i>✎ ◍ ─ اختیاریه، می‌تونی اول ست کنی</i>", reply_markup=get_buttons())
 
-    user_files[message.from_user.id] = file_id
-    await message.reply(
-        f"✅ <b>آهنگت رسید!</b>\n"
-        f"<blockquote>{file_name}</blockquote>\n"
-        f"حالا انتخاب کن باهاش چیکار کنم؟ 👇",
-        reply_markup=get_buttons()
-    )
+@dp.message(F.video)
+async def handle_video(message: types.Message):
+    if message.from_user.id in broadcast_mode and is_admin(message.from_user.id):
+        await do_broadcast(message)
 
-@dp.callback_query()
-async def process_effect(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in user_files:
-        await callback.answer("اول یه آهنگ بفرست! 🎵", show_alert=True)
-        return
+async def do_broadcast(message: types.Message):
+    broadcast_mode.discard(message.from_user.id)
+    await message.reply(f"◍ sᴇɴᴅɪɴɢ ᴛᴏ {len(all_users)} ...")
+    ok = fail = 0
+    for uid in list(all_users):
+        try:
+            await bot.copy_message(chat_id=uid, from_chat_id=message.chat.id, message_id=message.message_id)
+            ok += 1
+        except:
+            fail += 1
+        if ok % 20 == 0:
+            await asyncio.sleep(0.5)
+    await message.reply(f"✉ <b>ᴅᴏɴᴇ</b>\n─ ─ ─\n✓ : <b>{ok}</b>\n✕ : <b>{fail}</b>", reply_markup=get_admin_panel())
 
-    effect = callback.data
-    await callback.message.edit_text(
-        "⏳ <b>دارم پردازش می‌کنم...</b>\n"
-        "<blockquote>چند ثانیه صبر کن، داره جادو میشه ✨</blockquote>"
-    )
-
-    file_id = user_files[user_id]
-    file = await bot.get_file(file_id)
-    input_path = f"input_{user_id}.mp3"
-    output_path = f"output_{user_id}.mp3"
-    await bot.download_file(file.file_path, input_path)
-
-    captions = {
-        "slowed": "🐌 <b>Slowed شد!</b>\n<blockquote>نسخه آروم و لوفایش آماده‌ست، بگیر بخواب باهاش 🌙</blockquote>",
-        "slowed_reverb": "🎧 <b>Slowed + Reverb شد!</b>\n<blockquote>وایب بارون پشت پنجره رو میده 🌧️</blockquote>",
-        "speedup": "⚡ <b>Speed Up شد!</b>\n<blockquote>انرژی گرفت، بزن زیرش برو باشگاه 🏋️</blockquote>",
-        "nightcore": "🌃 <b>Nightcore شد!</b>\n<blockquote>شب، نور شهر، سرعت بالا 🌃✨</blockquote>",
-        "bass": "🔊 <b>Bass Boost شد!</b>\n<blockquote>باسش قلبتو میلرزونه، با هندزفری گوش بده 🎧💥</blockquote>",
-        "reverb": "🌊 <b>Reverb شد!</b>\n<blockquote>انگار داری توی یه سالن بزرگ گوش میدی 🏛️</blockquote>",
-        "8d": "🎩 <b>8D شد!</b>\n<blockquote>هندزفری بذار، صدا دور سرت می‌چرخه��🎧</blockquote>"
-    }
-
-    filters = {
-        "slowed": "atempo=0.8",
-        "slowed_reverb": "atempo=0.8,aecho=0.8:0.9:1000:0.3",
-        "speedup": "atempo=1.25",
-        "nightcore": "asetrate=44100*1.25,aresample=44100",
-        "bass": "bass=g=12:f=110:w=0.6",
-        "reverb": "aecho=0.8:0.9:1000:0.3",
-        "8d": "apulsator=hz=0.125"
-    }
-
+async def send_final(uid: int, chat_id: int, reply_to: types.Message):
+    info = user_files[uid]
+    st = get_settings(uid)
+    effects = info["effects"]
+    chain_path = info["chain_path"]
+    final_path = f"output_{uid}.mp3"
     try:
-        cmd = f'ffmpeg -y -i "{input_path}" -filter:a "{filters[effect]}" "{output_path}"'
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.path.exists(chain_path):
+            os.replace(chain_path, final_path)
+        else:
+            final_path = chain_path
+    except:
+        final_path = chain_path
+    await add_audio_watermark(final_path, final_path)
+    suffix_full = " ".join([SUFFIX.get(e, "") for e in effects]).strip()
+    base = info["base_title"]
+    new_title = base if (suffix_full and base.lower().endswith(suffix_full.lower())) else f"{base} {suffix_full}".strip()
+    new_performer = st.get("artist") or info.get("performer") or "Unknown Artist"
+    safe_name = "".join(c for c in new_title if c not in '/\\:*?"<>|').strip() or "music"
+    duration = info["base_duration"]
+    for e in effects:
+        duration = calc_duration(duration, e)
+    thumb_file = None
+    t1 = f"thumb_{uid}.jpg"
+    t2 = f"thumb_{uid}_fixed.jpg"
+    try:
+        cid = st.get("cover") or info.get("thumb_id")
+        if cid:
+            tf = await bot.get_file(cid)
+            await bot.download_file(tf.file_path, t1)
+            if await fix_thumb(t1, t2):
+                thumb_file = FSInputFile(t2)
+            elif os.path.exists(t1):
+                thumb_file = FSInputFile(t1)
+    except:
+        thumb_file = None
+    styled_fx = " + ".join([EFFECT_STYLED.get(e, e) for e in effects])
+    emoji = EFFECT_EMOJI.get(effects[-1], "🎧") if effects else "🎧"
+    wm = f"\n🤖 @{BOT_USERNAME}" if BOT_USERNAME else ""
+    caption = f"╭── {emoji} <b>{styled_fx}</b> ──╮\n│ ♫ <b>{new_title}</b>\n│ ✎ {new_performer}\n│ ◷ {format_time(duration)}{wm}\n╰──────────╯\n<i>🎧 ᴡɪᴛʜ ʜᴇᴀᴅᴘʜᴏɴᴇs</i>"
+    audio_file = FSInputFile(final_path, filename=f"{safe_name}.mp3")
+    await bot.send_audio(chat_id, audio_file, title=new_title, performer=new_performer, duration=duration if duration else None, thumbnail=thumb_file, caption=caption, reply_markup=get_share_kb())
+    for p in [t1, t2, final_path]:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+        except:
+            pass
+    try:
+        await reply_to.delete()
+    except:
+        pass
+    user_files.pop(uid, None)
 
-        await callback.message.answer_audio(types.FSInputFile(output_path), caption=captions.get(effect, "<b>تموم شد! ✨</b>"))
-        await callback.message.delete()
+@dp.callback_query(F.data.startswith("fx:"))
+async def first_effect(callback: types.CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    if uid not in user_files:
+        await callback.answer("اول فایل بفرست 🎵", show_alert=True)
+        return
+    effect = callback.data.split(":", 1)[1]
+    if effect not in FILTERS:
+        return
+    await callback.message.edit_text("◍ <b>ᴘʀᴏᴄᴇssɪɴɢ ...</b>")
+    try:
+        await bot.send_chat_action(callback.message.chat.id, "upload_voice")
+    except:
+        pass
+    info = user_files[uid]
+    inp = f"input_{uid}.tmp"
+    outp = f"chain_{uid}.mp3"
+    try:
+        f = await bot.get_file(info["file_id"])
+        await bot.download_file(f.file_path, inp)
+        await apply_effect_to_file(inp, outp, effect)
+        try:
+            os.remove(inp)
+        except:
+            pass
+        info["effects"] = [effect]
+        info["chain_path"] = outp
+        await callback.message.edit_text(f"╭── <b>✓ {EFFECT_STYLED.get(effect, effect)}</b> ──╮\n│ 🔗 ─ یه افکت دیگه هم اضافه کنم؟\n╰──────────╯", reply_markup=get_chain_buttons())
     except Exception as e:
-        await callback.message.edit_text(f"❌ <b>خطا خورد:</b>\n<blockquote>{e}</blockquote>")
-    finally:
-        if os.path.exists(input_path):
-            os.remove(input_path)
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        await callback.message.edit_text(f"✕ <b>ᴇʀʀᴏʀ :</b> <i>{e}</i>")
+
+@dp.callback_query(F.data.startswith("chain:"))
+async def chain_effect(callback: types.CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    if uid not in user_files or not user_files[uid].get("chain_path"):
+        await callback.answer("فایلی نیست.", show_alert=True)
+        return
+    effect = callback.data.split(":", 1)[1]
+    if effect not in FILTERS:
+        return
+    info = user_files[uid]
+    if effect in info["effects"]:
+        await callback.answer("این افکت قبلاً اضافه شده.", show_alert=True)
+        return
+    await callback.message.edit_text("◍ <b>ᴀᴅᴅɪɴɢ ...</b>")
+    old = info["chain_path"]
+    new = f"chain_{uid}_2.mp3"
+    try:
+        await apply_effect_to_file(old, new, effect)
+        try:
+            os.remove(old)
+        except:
+            pass
+        info["chain_path"] = new
+        info["effects"].append(effect)
+        label = " + ".join([EFFECT_STYLED.get(e, e) for e in info["effects"]])
+        await callback.message.edit_text(f"╭── <b>✓ {label}</b> ──╮\n│ 🔗 ─ باز هم اضافه کنم؟\n╰──────────╯", reply_markup=get_chain_buttons())
+    except Exception as e:
+        await callback.message.edit_text(f"✕ <b>ᴇʀʀᴏʀ :</b> <i>{e}</i>")
+
+@dp.callback_query(F.data == "chain_done")
+async def chain_done(callback: types.CallbackQuery):
+    await callback.answer()
+    uid = callback.from_user.id
+    if uid not in user_files or not user_files[uid].get("chain_path"):
+        await callback.answer("فایلی نیست.", show_alert=True)
+        return
+    try:
+        await send_final(uid, callback.message.chat.id, callback.message)
+    except Exception as e:
+        await callback.message.edit_text(f"✕ <b>ᴇʀʀᴏʀ :</b> <i>{e}</i>")
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
 
 async def main():
-    await bot.set_my_commands([
-        BotCommand(command="start", description="شروع بات 🚀"),
-        BotCommand(command="help", description="راهنما 📖"),
-    ])
+    global BOT_USERNAME
+    try:
+        me = await bot.get_me()
+        BOT_USERNAME = me.username or ""
+    except:
+        pass
+    try:
+        await bot.set_my_commands([BotCommand(command="start", description="sᴛᴀʀᴛ ✦"), BotCommand(command="help", description="ʜᴇʟᴘ ◍")])
+    except:
+        pass
     app = web.Application()
     app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
     await site.start()
     print("بات روشن شد...")
     await dp.start_polling(bot)
