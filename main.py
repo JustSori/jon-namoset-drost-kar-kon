@@ -663,7 +663,7 @@ async def apply_effect_to_file(
     # True peak limit helps reduce clipping.
     audio_filter = (
         f"{FILTERS[effect]},"
-        "loudnorm=I=-14:TP=-1.0:LRA=11"
+        "loudnorm=I=-10:TP=-1.0:LRA=7"
     )
 
     cmd = [
@@ -712,7 +712,7 @@ async def add_audio_watermark(inp: str, outp: str):
             "volume=0.04[beep];"
             "[main][beep]amix=inputs=2:"
             "duration=first:dropout_transition=0,"
-            "loudnorm=I=-14:TP=-1.0:LRA=11[a]"
+            "loudnorm=I=-10:TP=-1.0:LRA=7[a]"
         ),
         "-map", "[a]",
         "-ar", "44100",
