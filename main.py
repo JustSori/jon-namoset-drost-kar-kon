@@ -21,6 +21,7 @@ for x in os.getenv("ADMIN_ID", "").split(","):
         ADMIN_IDS.add(int(x))
 
 WATERMARK_SOUND = os.getenv("WATERMARK", "on")
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip()
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -68,12 +69,12 @@ def get_settings(uid: int):
 
 def get_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🐌 اسلو | Slowed", callback_data="fx:slowed"),
-         InlineKeyboardButton(text="🎧 اسلو + ریورب", callback_data="fx:slowed_reverb")],
-        [InlineKeyboardButton(text="🌃 نایتکور | Nightcore", callback_data="fx:nightcore"),
-         InlineKeyboardButton(text="⚡ افزایش سرعت", callback_data="fx:speedup")],
-        [InlineKeyboardButton(text="🔊 تقویت بیس", callback_data="fx:bass"),
-         InlineKeyboardButton(text="🌊 ریورب | Reverb", callback_data="fx:reverb")],
+        [InlineKeyboardButton(text="🐌 Slowed", callback_data="fx:slowed"),
+         InlineKeyboardButton(text="🎧 Slowed + Reverb", callback_data="fx:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 Nightcore", callback_data="fx:nightcore"),
+         InlineKeyboardButton(text="⚡ Speed Up", callback_data="fx:speedup")],
+        [InlineKeyboardButton(text="🔊 Bass Boost", callback_data="fx:bass"),
+         InlineKeyboardButton(text="🌊 Reverb", callback_data="fx:reverb")],
         [InlineKeyboardButton(text="🎩 8D", callback_data="fx:8d")],
         [InlineKeyboardButton(text="✏️ تنظیم خواننده", callback_data="set_artist"),
          InlineKeyboardButton(text="🖼️ تنظیم کاور", callback_data="set_cover")],
@@ -81,12 +82,12 @@ def get_buttons():
 
 def get_chain_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🐌 اسلو | Slowed", callback_data="chain:slowed"),
-         InlineKeyboardButton(text="🎧 اسلو + ریورب", callback_data="chain:slowed_reverb")],
-        [InlineKeyboardButton(text="🌃 نایتکور | Nightcore", callback_data="chain:nightcore"),
-         InlineKeyboardButton(text="⚡ افزایش سرعت", callback_data="chain:speedup")],
-        [InlineKeyboardButton(text="🔊 تقویت بیس", callback_data="chain:bass"),
-         InlineKeyboardButton(text="🌊 ریورب | Reverb", callback_data="chain:reverb")],
+        [InlineKeyboardButton(text="🐌 Slowed", callback_data="chain:slowed"),
+         InlineKeyboardButton(text="🎧 Slowed + Reverb", callback_data="chain:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 Nightcore", callback_data="chain:nightcore"),
+         InlineKeyboardButton(text="⚡ Speed Up", callback_data="chain:speedup")],
+        [InlineKeyboardButton(text="🔊 Bass Boost", callback_data="chain:bass"),
+         InlineKeyboardButton(text="🌊 Reverb", callback_data="chain:reverb")],
         [InlineKeyboardButton(text="🎩 8D", callback_data="chain:8d")],
         [InlineKeyboardButton(text="✅ پایان افکت‌ها و دریافت", callback_data="chain_done")],
     ])
@@ -117,7 +118,7 @@ FILTERS = {
     "8d": "extrastereo=m=1.6,apulsator=hz=0.15,aresample=44100"
 }
 EFFECT_EMOJI = {"slowed": "🐌", "slowed_reverb": "🎧", "speedup": "⚡", "nightcore": "🌃", "bass": "🔊", "reverb": "🌊", "8d": "🎩"}
-EFFECT_TITLE_FA = {"slowed": "اسلو", "slowed_reverb": "اسلو + ریورب", "speedup": "اسپید آپ", "nightcore": "نایتکور", "bass": "بیس بوست", "reverb": "ریورب", "8d": "هشت‌بعدی"}
+EFFECT_TITLE_FA = {"slowed": "Slowed", "slowed_reverb": "Slowed + Reverb", "speedup": "Speed Up", "nightcore": "Nightcore", "bass": "Bass Boost", "reverb": "Reverb", "8d": "8D"}
 EFFECT_STYLED = {"slowed": "Slᴏᴡᴇᴅ", "slowed_reverb": "Slᴏᴡᴇᴅ + Rᴇᴠᴇʀʙ", "speedup": "Sᴘᴇᴇᴅ Up", "nightcore": "Nɪɢʜᴛᴄᴏʀᴇ", "bass": "Bᴀss Bᴏᴏsᴛ", "reverb": "Rᴇᴠᴇʀʙ", "8d": "8D"}
 
 def format_time(s: int) -> str:
@@ -135,8 +136,30 @@ def calc_duration(base: int, effect: str) -> int:
     return base or 0
 
 def run_search(query: str):
-    cmd = ["yt-dlp", f"ytsearch5:{query}", "--flat-playlist", "--dump-json", "--no-playlist", "--no-warnings"]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=30)
+    cmd = [
+        "yt-dlp",
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--sleep-requests", "1",
+        "--extractor-args", "youtube:player_client=tv,web_safari",
+        "ytsearch5:" + query,
+        "--flat-playlist",
+        "--dump-json",
+    ]
+    if YTDLP_COOKIES_FILE and os.path.isfile(YTDLP_COOKIES_FILE):
+        cmd.extend(["--cookies", YTDLP_COOKIES_FILE])
+
+    r = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=45,
+    )
+    if r.returncode != 0 and not r.stdout.strip():
+        raise RuntimeError((r.stderr or "جست‌وجوی YouTube ناموفق بود.").strip()[-1000:])
+
     out = []
     for line in r.stdout.splitlines():
         line = line.strip()
@@ -151,8 +174,14 @@ def run_search(query: str):
             url = j.get("url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
             if vid and "://" not in url:
                 url = f"https://www.youtube.com/watch?v={vid}"
-            out.append({"id": vid, "title": title[:80], "duration": int(dur or 0), "uploader": str(uploader)[:50], "url": url})
-        except:
+            out.append({
+                "id": vid,
+                "title": title[:80],
+                "duration": int(dur or 0),
+                "uploader": str(uploader)[:50],
+                "url": url,
+            })
+        except (ValueError, TypeError):
             continue
         if len(out) >= 5:
             break
@@ -163,15 +192,20 @@ def run_download(url: str, out_path: str):
     template = base + ".%(ext)s"
     cmd = [
         "yt-dlp",
+        "--ignore-config",
         "--no-playlist",
         "--no-warnings",
         "--no-progress",
+        "--sleep-requests", "1",
+        "--extractor-args", "youtube:player_client=tv,web_safari",
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "192K",
         "-o", template,
-        url,
     ]
+    if YTDLP_COOKIES_FILE and os.path.isfile(YTDLP_COOKIES_FILE):
+        cmd.extend(["--cookies", YTDLP_COOKIES_FILE])
+    cmd.append(url)
 
     try:
         result = subprocess.run(
@@ -190,7 +224,6 @@ def run_download(url: str, out_path: str):
     if result.returncode != 0 or not os.path.isfile(final_path):
         error = (result.stderr or result.stdout or "خطای نامشخص از yt-dlp").strip()
         raise RuntimeError(error[-1200:])
-
     return final_path
 
 async def fix_thumb(src: str, dst: str) -> bool:
@@ -239,9 +272,9 @@ START_TXT = (
     "• فایل صوتی رو همین‌جا بفرست؛ یا\n"
     "• اسم خواننده و آهنگ رو بنویس تا جست‌وجو کنم. 🔍\n\n"
     "🎛️ <b>افکت‌های قابل انتخاب</b>\n"
-    "🐌 اسلو  •  🎧 اسلو + ریورب\n"
-    "🌃 نایتکور  •  ⚡ افزایش سرعت\n"
-    "🔊 تقویت بیس  •  🌊 ریورب  •  🎩 صدای 8D\n\n"
+    "🐌 Slowed  •  🎧 Slowed + Reverb\n"
+    "🌃 Nightcore  •  ⚡ Speed Up\n"
+    "🔊 Bass Boost  •  🌊 Reverb  •  🎩 8D\n\n"
     "━━━━━━━━━━━━━━━━━━\n"
     "👇 <b>برای شروع، فایل بفرست یا اسم آهنگ رو بنویس.</b>"
 )
