@@ -68,41 +68,41 @@ def get_settings(uid: int):
 
 def get_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🐌 Slᴏᴡᴇᴅ", callback_data="fx:slowed"),
-         InlineKeyboardButton(text="🎧 Slᴏᴡᴇᴅ + Rᴇᴠᴇʀʙ", callback_data="fx:slowed_reverb")],
-        [InlineKeyboardButton(text="🌃 Nɪɢʜᴛᴄᴏʀᴇ", callback_data="fx:nightcore"),
-         InlineKeyboardButton(text="⚡ Sᴘᴇᴇᴅ Up", callback_data="fx:speedup")],
-        [InlineKeyboardButton(text="🔊 Bᴀss Bᴏᴏsᴛ", callback_data="fx:bass"),
-         InlineKeyboardButton(text="🌊 Rᴇᴠᴇʀʙ", callback_data="fx:reverb")],
+        [InlineKeyboardButton(text="🐌 اسلو | Slowed", callback_data="fx:slowed"),
+         InlineKeyboardButton(text="🎧 اسلو + ریورب", callback_data="fx:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 نایتکور | Nightcore", callback_data="fx:nightcore"),
+         InlineKeyboardButton(text="⚡ افزایش سرعت", callback_data="fx:speedup")],
+        [InlineKeyboardButton(text="🔊 تقویت بیس", callback_data="fx:bass"),
+         InlineKeyboardButton(text="🌊 ریورب | Reverb", callback_data="fx:reverb")],
         [InlineKeyboardButton(text="🎩 8D", callback_data="fx:8d")],
-        [InlineKeyboardButton(text="✏️ Aʀᴛɪsᴛ", callback_data="set_artist"),
-         InlineKeyboardButton(text="🖼️ Cᴏᴠᴇʀ", callback_data="set_cover")],
+        [InlineKeyboardButton(text="✏️ تنظیم خواننده", callback_data="set_artist"),
+         InlineKeyboardButton(text="🖼️ تنظیم کاور", callback_data="set_cover")],
     ])
 
 def get_chain_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🐌 Slᴏᴡᴇᴅ", callback_data="chain:slowed"),
-         InlineKeyboardButton(text="🎧 Slᴏᴡᴇᴅ + Rᴇᴠᴇʀʙ", callback_data="chain:slowed_reverb")],
-        [InlineKeyboardButton(text="🌃 Nɪɢʜᴛᴄᴏʀᴇ", callback_data="chain:nightcore"),
-         InlineKeyboardButton(text="⚡ Sᴘᴇᴇᴅ Up", callback_data="chain:speedup")],
-        [InlineKeyboardButton(text="🔊 Bᴀss Bᴏᴏsᴛ", callback_data="chain:bass"),
-         InlineKeyboardButton(text="🌊 Rᴇᴠᴇʀʙ", callback_data="chain:reverb")],
+        [InlineKeyboardButton(text="🐌 اسلو | Slowed", callback_data="chain:slowed"),
+         InlineKeyboardButton(text="🎧 اسلو + ریورب", callback_data="chain:slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 نایتکور | Nightcore", callback_data="chain:nightcore"),
+         InlineKeyboardButton(text="⚡ افزایش سرعت", callback_data="chain:speedup")],
+        [InlineKeyboardButton(text="🔊 تقویت بیس", callback_data="chain:bass"),
+         InlineKeyboardButton(text="🌊 ریورب | Reverb", callback_data="chain:reverb")],
         [InlineKeyboardButton(text="🎩 8D", callback_data="chain:8d")],
-        [InlineKeyboardButton(text="✅ Dᴏɴᴇ ─ تحویل بده", callback_data="chain_done")],
+        [InlineKeyboardButton(text="✅ پایان افکت‌ها و دریافت", callback_data="chain_done")],
     ])
 
 def get_admin_panel():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Sᴛᴀᴛs ─ آمار", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="📢 Bʀᴏᴀᴅᴄᴀsᴛ ─ همگانی", callback_data="admin_broadcast")]
+        [InlineKeyboardButton(text="📊 آمار ربات", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 پیام همگانی", callback_data="admin_broadcast")]
     ])
 
 def get_share_kb():
     if BOT_USERNAME:
         url = f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}&text=این آهنگو با این ربات درست کردم 🎧"
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↗️ Sʜᴀʀᴇ", url=url)],
-            [InlineKeyboardButton(text="🎧 Mᴀᴋᴇ Nᴇᴡ", url=f"https://t.me/{BOT_USERNAME}")]
+            [InlineKeyboardButton(text="↗️ اشتراک‌گذاری", url=url)],
+            [InlineKeyboardButton(text="🎧 ساخت آهنگ جدید", url=f"https://t.me/{BOT_USERNAME}")]
         ])
     return None
 
@@ -232,41 +232,36 @@ async def add_audio_watermark(inp: str, outp: str):
             pass
 
 START_TXT = (
-    "╭─── <b>🎧 Mᴜsɪᴄ Eғғᴇᴄᴛs</b> ───╮\n"
-    "│ سلام، خوش اومدی ✨\n"
-    "│ دو راه داری:\n"
-    "╰───────────────╯\n\n"
-    "1️⃣ 🎵 <b>فایل بفرست</b>\n"
-    "<i>یه موزیک mp3 بفرست مستقیم برو سر افکت</i>\n\n"
-    "2️⃣ 🔍 <b>اسم آهنگو بنویس تا سرچ کنم</b>\n"
-    "<i>مثال: shadmehr - ehsas</i>\n"
-    "<i>مثال: tataloo del</i>\n"
-    "<i>بهتره اسم خواننده + اسم آهنگ باشه</i>\n\n"
-    "🎛️ <b>Eғғᴇᴄᴛs:</b>\n"
-    "🐌 Slᴏᴡᴇᴅ ┆ 🎧 Slᴏᴡᴇᴅ + Rᴇᴠᴇʀʙ\n"
-    "🌃 Nɪɢʜᴛᴄᴏʀᴇ ┆ ⚡ Sᴘᴇᴇᴅ Up\n"
-    "🔊 Bᴀss Bᴏᴏsᴛ ┆ 🌊 Rᴇᴠᴇʀʙ ┆ 🎩 8D\n\n"
-    "─ ─ ─ ─ ─ ─ ─ ─\n"
-    "👇 الان یه فایل بفرست یا اسم آهنگو بنویس"
+    "🎧 <b>Music Effects</b>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "سلام! به ربات افکت آهنگ خوش اومدی ✨\n\n"
+    "🎵 <b>چطور استفاده کنی؟</b>\n"
+    "• فایل صوتی رو همین‌جا بفرست؛ یا\n"
+    "• اسم خواننده و آهنگ رو بنویس تا جست‌وجو کنم. 🔍\n\n"
+    "🎛️ <b>افکت‌های قابل انتخاب</b>\n"
+    "🐌 اسلو  •  🎧 اسلو + ریورب\n"
+    "🌃 نایتکور  •  ⚡ افزایش سرعت\n"
+    "🔊 تقویت بیس  •  🌊 ریورب  •  🎩 صدای 8D\n\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "👇 <b>برای شروع، فایل بفرست یا اسم آهنگ رو بنویس.</b>"
 )
 
 HELP_TXT = (
-    "╭── <b>📖 Hᴇʟᴘ ─ راهنما</b> ──╮\n"
-    "│ 🔍 <b>اگه فایل نداری:</b>\n"
-    "│ 1️⃣ اسم خواننده + آهنگو بنویس\n"
-    "│ <i>مثال: evan band - aliye ali</i>\n"
-    "│ 2️⃣ از لیست ۵ تایی انتخاب کن\n"
-    "│ 3️⃣ صبر کن دانلود بشه ⏳\n"
-    "│ ─ ─ ─ ─\n"
-    "│ 🎵 <b>اگه فایل داری:</b>\n"
-    "│ ─ مستقیم فایل mp3 رو بفرست\n"
-    "│ ─ ─ ─ ─\n"
-    "│ 🎛️ <b>بعدش:</b>\n"
-    "│ 1️⃣ افکت رو بزن\n"
-    "│ 2️⃣ افکت بعدی هم میتونی اضافه کنی 🔗\n"
-    "│ 3️⃣ ✅ Dᴏɴᴇ رو بزن تحویل بگیر\n"
-    "╰──────────╯\n"
-    "⚠️ <i>ترک بیشتر از ۱۰ دقیقه دانلود نمیشه</i>"
+    "📖 <b>راهنمای Music Effects</b>\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "🔍 <b>جست‌وجوی آهنگ</b>\n"
+    "۱. نام خواننده و آهنگ رو بفرست.\n"
+    "۲. یکی از نتایج رو انتخاب کن.\n"
+    "۳. بعد از دانلود، افکت دلخواهت رو بزن.\n\n"
+    "🎵 <b>استفاده از فایل شخصی</b>\n"
+    "فایل صوتی رو مستقیم برای ربات ارسال کن.\n\n"
+    "🎛️ <b>اعمال چند افکت</b>\n"
+    "بعد از افکت اول، می‌تونی افکت‌های بیشتری اضافه کنی؛ سپس «پایان افکت‌ها و دریافت» رو بزن.\n\n"
+    "🖼️ <b>تنظیمات اختیاری</b>\n"
+    "از دکمه‌های «تنظیم خواننده» و «تنظیم کاور» استفاده کن.\n\n"
+    "⚠️ مدت آهنگ برای جست‌وجو و دانلود باید حداکثر ۱۰ دقیقه باشه.\n"
+    "━━━━━━━━━━━━━━━━━━\n"
+    "برای لغو عملیات در حال انتظار: /cancel"
 )
 
 @dp.message(CommandStart())
@@ -308,13 +303,13 @@ async def cancel_cmd(message: types.Message):
 async def ask_artist(callback: types.CallbackQuery):
     await callback.answer()
     awaiting[callback.from_user.id] = "artist"
-    await callback.message.reply("✏️ <b>Aʀᴛɪsᴛ Nᴀᴍᴇ؟</b>\nاسم آرتیست رو بفرست.\n<i>لغو با /cancel</i>")
+    await callback.message.reply("✏️ <b>تنظیم نام خواننده</b>\nنامی که می‌خوای روی فایل نهایی نمایش داده بشه رو بفرست.\nبرای لغو: /cancel")
 
 @dp.callback_query(F.data == "set_cover")
 async def ask_cover(callback: types.CallbackQuery):
     await callback.answer()
     awaiting[callback.from_user.id] = "cover"
-    await callback.message.reply("🖼️ <b>Cᴏᴠᴇʀ؟</b>\nعکس کاور رو بفرست.\n<i>لغو با /cancel</i>")
+    await callback.message.reply("🖼️ <b>تنظیم کاور آهنگ</b>\nعکس موردنظرت رو ارسال کن.\nبرای لغو: /cancel")
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
@@ -415,9 +410,9 @@ async def pick_search(callback: types.CallbackQuery):
         user_files[uid] = {"file_id": None, "title": base_title, "performer": item.get("uploader") or "YouTube", "duration": item.get("duration") or 0, "thumb_id": None, "file_name": f"{base_title}.mp3", "effects": [], "chain_path": None, "base_title": base_title, "base_duration": item.get("duration") or 0, "dl_path": dl_path, "from_search": True}
         extra = ""
         if st.get("artist"):
-            extra += f"\n✏️ Aʀᴛɪsᴛ: <b>{st['artist']}</b>"
+            extra += f"\n✏️ تنظیم خواننده: <b>{st['artist']}</b>"
         if st.get("cover"):
-            extra += "\n🖼️ Cᴏᴠᴇʀ: <b>Oɴ ✅</b>"
+            extra += "\n🖼️ تنظیم کاور: <b>Oɴ ✅</b>"
         await callback.message.edit_text(f"╭── <b>✅ دانلود شد، حالا افکت بزن</b> ──╮\n│ 🎵 <b>{base_title}</b>{extra}\n╰──────────╯\n─ افکت رو انتخاب کن 👇", reply_markup=get_buttons())
     except Exception as e:
         await callback.message.edit_text(f"❌ <b>دانلود نشد:</b> <i>{e}</i>")
@@ -457,9 +452,9 @@ async def handle_music(message: types.Message):
     show_name = title or os.path.splitext(file_name)[0]
     extra = ""
     if st.get("artist"):
-        extra += f"\n✏️ Aʀᴛɪsᴛ: <b>{st['artist']}</b>"
+        extra += f"\n✏️ تنظیم خواننده: <b>{st['artist']}</b>"
     if st.get("cover"):
-        extra += "\n🖼️ Cᴏᴠᴇʀ: <b>Oɴ ✅</b>"
+        extra += "\n🖼️ تنظیم کاور: <b>Oɴ ✅</b>"
     await message.reply(f"╭── <b>✅ Rᴇᴄᴇɪᴠᴇᴅ</b> ──╮\n│ 🎵 <b>{show_name}</b>{extra}\n╰──────────╯\n─ افکت رو انتخاب کن 👇", reply_markup=get_buttons())
 
 @dp.message(F.video)
@@ -556,7 +551,7 @@ async def first_effect(callback: types.CallbackQuery):
     effect = callback.data.split(":", 1)[1]
     if effect not in FILTERS:
         return
-    await callback.message.edit_text("⏳ <b>Pʀᴏᴄᴇssɪɴɢ...</b>")
+    await callback.message.edit_text("🎛️ <b>در حال اعمال افکت</b>\n━━━━━━━━━━━━━━━━━━\n⏳ لطفاً صبر کن...")
     try:
         await bot.send_chat_action(callback.message.chat.id, "upload_voice")
     except:
@@ -593,7 +588,7 @@ async def chain_effect(callback: types.CallbackQuery):
     if effect in info["effects"]:
         await callback.answer("این افکت قبلاً اضافه شده.", show_alert=True)
         return
-    await callback.message.edit_text("⏳ <b>Aᴅᴅɪɴɢ...</b>")
+    await callback.message.edit_text("🔗 <b>در حال افزودن افکت</b>\n━━━━━━━━━━━━━━━━━━\n⏳ لطفاً صبر کن...")
     old = info["chain_path"]
     new = f"chain_{uid}_2.mp3"
     try:
