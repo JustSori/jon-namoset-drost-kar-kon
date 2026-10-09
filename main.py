@@ -20,6 +20,7 @@ dp = Dispatcher()
 user_files = {}
 broadcast_wait = set()
 
+# ---------- دیتابیس ----------
 DB = "bot.db"
 con = sqlite3.connect(DB, check_same_thread=False)
 cur = con.cursor()
@@ -29,7 +30,18 @@ cur.execute("INSERT OR IGNORE INTO stats VALUES ('processed', 0)")
 cur.execute("CREATE TABLE IF NOT EXISTS effect_stats (effect TEXT PRIMARY KEY, count INTEGER DEFAULT 0)")
 cur.execute("CREATE TABLE IF NOT EXISTS daily_usage (user_id INTEGER, date TEXT, count INTEGER DEFAULT 0, PRIMARY KEY(user_id, date))")
 cur.execute("CREATE TABLE IF NOT EXISTS daily_total (date TEXT PRIMARY KEY, count INTEGER DEFAULT 0)")
+cur.execute("CREATE TABLE IF NOT EXISTS history (user_id INTEGER, file_id TEXT, title TEXT, performer TEXT, duration INTEGER, thumb_id TEXT, file_name TEXT, created INTEGER)")
 con.commit()
+
+# ---------- قالب متن ----------
+LINE = "━━━━━━━━━━━━"
+BOT_NAME = "🎧 موزیک افکت"
+
+def box(title, body, footer=""):
+    text = f"{BOT_NAME} | <b>{title}</b>\n{LINE}\n{body}\n{LINE}"
+    if footer:
+        text += f"\n{footer}"
+    return text
 
 def today_str():
     return datetime.now().strftime("%Y-%m-%d")
@@ -81,42 +93,73 @@ def inc_usage(user_id: int, effect: str):
     cur.execute("UPDATE effect_stats SET count=count+1 WHERE effect=?", (effect,))
     con.commit()
 
+def add_history(user_id, info):
+    cur.execute("INSERT INTO history VALUES (?,?,?,?,?,?,?,?)",
+        (user_id, info["file_id"], info.get("title") or "", info.get("performer") or "",
+         info.get("duration") or 0, info.get("thumb_id") or "", info.get("file_name") or "", int(time.time())))
+    cur.execute("DELETE FROM history WHERE rowid NOT IN (SELECT rowid FROM history WHERE user_id=? ORDER BY created DESC LIMIT 5)", (user_id,))
+    con.commit()
+
+def get_history(user_id):
+    cur.execute("SELECT file_id, title, performer, duration, thumb_id, file_name FROM history WHERE user_id=? ORDER BY created DESC", (user_id,))
+    return cur.fetchall()
+
+# ---------- کیبوردها ----------
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F4D6 راهنما", callback_data="show_help")],
-        [InlineKeyboardButton(text="\U0001F3B5 لیست افکت‌ها", callback_data="show_effects")],
+        [InlineKeyboardButton(text="📖 راهنما | چطور کار می‌کنه؟", callback_data="show_help")],
+        [InlineKeyboardButton(text="🎧 لیست افکت‌ها", callback_data="show_effects")],
+        [InlineKeyboardButton(text="🎶 آهنگ‌های من", callback_data="show_history")],
     ])
 
 def get_buttons():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F40C Slowed", callback_data="prev_slowed"),
-         InlineKeyboardButton(text="\U0001F3A7 Slowed + Reverb", callback_data="prev_slowed_reverb")],
-        [InlineKeyboardButton(text="\U0001F303 Nightcore", callback_data="prev_nightcore"),
-         InlineKeyboardButton(text="\u26A1 Speed Up", callback_data="prev_speedup")],
-        [InlineKeyboardButton(text="\U0001F50A Bass Boost", callback_data="prev_bass"),
-         InlineKeyboardButton(text="\U0001F30A Reverb", callback_data="prev_reverb")],
-        [InlineKeyboardButton(text="\U0001F3A9 8D", callback_data="prev_8d")]
+        [InlineKeyboardButton(text="🐌 Slowed", callback_data="prev_slowed"),
+         InlineKeyboardButton(text="🎧 Slowed + Reverb", callback_data="prev_slowed_reverb")],
+        [InlineKeyboardButton(text="🌃 Nightcore", callback_data="prev_nightcore"),
+         InlineKeyboardButton(text="⚡️ Speed Up", callback_data="prev_speedup")],
+        [InlineKeyboardButton(text="🔊 Bass Boost", callback_data="prev_bass"),
+         InlineKeyboardButton(text="🌊 Reverb", callback_data="prev_reverb")],
+        [InlineKeyboardButton(text="🎩 8D Audio", callback_data="prev_8d")],
+        [InlineKeyboardButton(text="❌ کنسل", callback_data="cancel_action")],
     ])
 
 def get_admin_panel():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F4CA آمار کامل", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="\U0001F3AF محبوب‌ترین افکت‌ها", callback_data="admin_effects")],
-        [InlineKeyboardButton(text="\U0001F4E3 پیام همگانی", callback_data="admin_broadcast")]
+        [InlineKeyboardButton(text="📊 آمار کامل", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="🎯 محبوب‌ترین افکت‌ها", callback_data="admin_effects")],
+        [InlineKeyboardButton(text="📣 پیام همگانی", callback_data="admin_broadcast")]
     ])
 
 def get_preview_buttons(effect):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F4E5 نسخه کاملشو بده", callback_data=f"full_{effect}")],
-        [InlineKeyboardButton(text="\U0001F501 یه افکت دیگه روی همین آهنگ", callback_data="back_effects")],
+        [InlineKeyboardButton(text="🔥 نسخه کاملشو بده", callback_data=f"full_{effect}")],
+        [InlineKeyboardButton(text="🎶 یه افکت دیگه روی همین آهنگ", callback_data="back_effects")],
+        [InlineKeyboardButton(text="❌ کنسل", callback_data="cancel_action")],
     ])
 
-def get_after_full_buttons():
+def get_after_full_buttons(bot_username):
+    share_url = f"https://t.me/share/url?url=https://t.me/{bot_username}&text=ببین آهنگمو چطور خفن کردم 😎🔥"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F501 یه افکت دیگه روی همین آهنگ", callback_data="back_effects")],
-        [InlineKeyboardButton(text="\U0001F3B5 آهنگ جدید", callback_data="new_song")],
+        [InlineKeyboardButton(text="🔥 بفرست برای رفیقت", url=share_url)],
+        [InlineKeyboardButton(text="🎶 یه افکت دیگه روی همین آهنگ", callback_data="back_effects")],
+        [InlineKeyboardButton(text="🎧 آهنگ جدید", callback_data="new_song")],
     ])
 
+def get_cancel_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ کنسل و خروج", callback_data="cancel_broadcast")]
+    ])
+
+def get_history_keyboard(rows):
+    kb = []
+    for idx, (fid, title, perf, dur, th, fn) in enumerate(rows):
+        name = (title or fn or "آهنگ")[:30]
+        kb.append([InlineKeyboardButton(text=f"🎵 {name}", callback_data=f"hist_{idx}")])
+    kb.append([InlineKeyboardButton(text="❌ کنسل", callback_data="cancel_action")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+# ---------- افکت‌ها ----------
 SUFFIX = {
     "slowed": "(slowed)",
     "slowed_reverb": "(slowed + reverb)",
@@ -128,13 +171,13 @@ SUFFIX = {
 }
 
 EFFECT_EMOJI = {
-    "slowed": "\U0001F40C",
-    "slowed_reverb": "\U0001F3A7",
-    "speedup": "\u26A1",
-    "nightcore": "\U0001F303",
-    "bass": "\U0001F50A",
-    "reverb": "\U0001F30A",
-    "8d": "\U0001F3A9"
+    "slowed": "🐌",
+    "slowed_reverb": "🎧",
+    "speedup": "⚡️",
+    "nightcore": "🌃",
+    "bass": "🔊",
+    "reverb": "🌊",
+    "8d": "🎩"
 }
 
 EFFECT_FA = {
@@ -162,8 +205,6 @@ DURATION_FACTOR = {
     "speedup": 1/1.25, "nightcore": 1/1.25,
     "bass": 1.0, "reverb": 1.0, "8d": 1.0
 }
-
-LINE = "\u2501" * 18
 
 def build_names(info, effect):
     suffix = SUFFIX.get(effect, effect)
@@ -196,40 +237,67 @@ def cleanup(*paths):
         except:
             pass
 
+# ---------- انیمیشن پیشرفت ----------
+async def animate_progress(message: types.Message, emoji: str, suffix: str, stop_event: asyncio.Event):
+    frames = ["◐", "◑", "◒", "◓"]
+    bars = ["▱▱▱▱▱", "▰▱▱▱▱", "▰▰▱▱▱", "▰▰▰▱▱", "▰▰▰▰▱", "▰▰▰▰▰"]
+    i = 0
+    while not stop_event.is_set():
+        f = frames[i % len(frames)]
+        b = bars[(i // 2) % len(bars)]
+        try:
+            await message.edit_text(
+                box("در حال پردازش ⏳", f"{emoji} افکت <b>{suffix}</b>\n\n{f} {b}\nدارم می‌سازمش...",
+                    "لطفا صبر کن، پیام رو پاک نکن 🙏"),
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        i += 1
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=0.8)
+        except asyncio.TimeoutError:
+            pass
+
+# ---------- دستورات ----------
 @dp.message(CommandStart())
 async def start(message: types.Message):
     add_user(message.from_user)
-    _, remaining = check_limit(message.from_user.id)
     await message.answer(
-        f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-        f"سلام رفیق! خوش اومدی \U0001F44B\u2728\n\n"
-        f"اینجا آهنگت رو به سبک اینستا خفن می‌کنم \U0001F60E\n"
-        f"\U0001F3AB سهم امروزت: <b>{remaining}</b>\n"
-        f"{LINE}\n"
-        f"\U0001F447 یه فایل موزیک بفرست تا شروع کنیم",
-        reply_markup=get_start_keyboard(),
-        parse_mode="HTML"
+        box("خوش اومدی 👋",
+            "سلام رفیق! آهنگتو بفرست تا به سبک اینستا خفنش کنم 😎🎶\n\n"
+            "🎛 افکت‌ها: 🐌 اسلود • 🎧 اسلود ریورب • 🌃 نایتکور • ⚡️ اسپیدآپ • 🔊 بیس • 🌊 ریورب • 🎩 8D",
+            "👇 یه فایل موزیک بفرست تا شروع کنیم"),
+        reply_markup=get_start_keyboard(), parse_mode="HTML"
     )
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
-        f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-        f"سلام! به ربات افکت آهنگ خوش اومدی \u2728\n\n"
-        f"\U0001F3B5 <b>چطور استفاده کنی؟</b>\n"
-        f"\u2022 فایل صوتی رو همین‌جا بفرست\n"
-        f"\u2022 یه افکت انتخاب کن\n"
-        f"\u2022 اول پیش‌نمایش 30 ثانیه‌ای میاد\n"
-        f"\u2022 اگه خوشت اومد بزن «نسخه کاملشو بده»\n\n"
-        f"\U0001F39B <b>افکت‌های قابل انتخاب</b>\n"
-        f"\U0001F40C Slowed  \u2022  \U0001F3A7 Slowed + Reverb\n"
-        f"\U0001F303 Nightcore  \u2022  \u26A1 Speed Up\n"
-        f"\U0001F50A Bass Boost  \u2022  \U0001F30A Reverb  \u2022  \U0001F3A9 8D\n"
-        f"{LINE}\n"
-        f"\U0001F501 با دکمه «یه افکت دیگه» می‌تونی بدون ارسال دوباره افکت عوض کنی\n"
-        f"\U0001F3AB سهم روزانه: <b>30</b> افکت\n"
-        f"\U0001F447 برای شروع، فایل بفرست.",
+        box("راهنما 📖",
+            "1️⃣ یه فایل صوتی بفرست 🎧\n"
+            "2️⃣ یه افکت انتخاب کن 🎛\n"
+            "3️⃣ اول پیش‌نمایش ۳۰ ثانیه‌ای میاد ⏳\n"
+            "4️⃣ اگه حال کردی بزن «🔥 نسخه کاملشو بده»",
+            "💡 با «🎶 یه افکت دیگه» لازم نیست دوباره آهنگ بفرستی"),
         parse_mode="HTML"
+    )
+
+@dp.message(Command("cancel"))
+async def cancel_cmd(message: types.Message):
+    broadcast_wait.discard(message.from_user.id)
+    user_files.pop(message.from_user.id, None)
+    await message.answer(box("لغو شد ❌", "همه‌چی پاک شد.", "🎧 یه آهنگ جدید بفرست"), parse_mode="HTML")
+
+@dp.message(Command("my"))
+async def my_songs(message: types.Message):
+    rows = get_history(message.from_user.id)
+    if not rows:
+        await message.answer(box("آهنگ‌های من 🎶", "هنوز چیزی نفرستادی!", "👇 یه آهنگ بفرست"), parse_mode="HTML")
+        return
+    await message.answer(
+        box("آهنگ‌های من 🎶", "۵ آهنگ آخرت، یکیشو انتخاب کن تا افکت بزنیم:", ""),
+        reply_markup=get_history_keyboard(rows), parse_mode="HTML"
     )
 
 @dp.message(Command("admin"))
@@ -238,11 +306,8 @@ async def admin(message: types.Message):
         return
     total, starts, proc, today = get_stats()
     await message.answer(
-        f"\U0001F451 <b>Music Effects | Admin</b>\n{LINE}\n"
-        f"\U0001F465 کاربران: <b>{total}</b>\n"
-        f"\u25B6\uFE0F استارت: <b>{starts}</b>\n"
-        f"\U0001F3A7 کل خروجی: <b>{proc}</b>\n"
-        f"\U0001F4C5 خروجی امروز: <b>{today}</b>\n{LINE}",
+        box("پنل ادمین 👑",
+            f"👥 کاربران: <b>{total}</b>\n▶️ استارت: <b>{starts}</b>\n🎧 کل خروجی: <b>{proc}</b>\n📅 خروجی امروز: <b>{today}</b>", ""),
         reply_markup=get_admin_panel(), parse_mode="HTML"
     )
 
@@ -251,7 +316,7 @@ async def handle_music(message: types.Message):
     if message.from_user.id in broadcast_wait and message.from_user.id in ADMIN_IDS:
         broadcast_wait.discard(message.from_user.id)
         users = get_all_users()
-        status = await message.reply(f"\U0001F4E3 <b>در حال ارسال به {len(users)} نفر...</b>", parse_mode="HTML")
+        status = await message.reply(f"📣 <b>در حال ارسال به {len(users)} نفر...</b>", parse_mode="HTML")
         ok = fail = 0
         for uid in users:
             try:
@@ -260,7 +325,7 @@ async def handle_music(message: types.Message):
             except:
                 fail += 1
             await asyncio.sleep(0.05)
-        await status.edit_text(f"\u2705 تموم شد\n\U0001F4D7 موفق: <b>{ok}</b>\n\U0001F4D5 ناموفق: <b>{fail}</b>", parse_mode="HTML")
+        await status.edit_text(f"✅ تموم شد\n📗 موفق: <b>{ok}</b>\n📕 ناموفق: <b>{fail}</b>", parse_mode="HTML")
         return
 
     file_id = title = performer = duration = thumb_id = None
@@ -292,14 +357,11 @@ async def handle_music(message: types.Message):
         "file_id": file_id, "title": title, "performer": performer,
         "duration": duration, "thumb_id": thumb_id, "file_name": file_name
     }
+    add_history(message.from_user.id, user_files[message.from_user.id])
     show_name = title or os.path.splitext(file_name)[0]
-    _, remaining = check_limit(message.from_user.id)
     await message.answer(
-        f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-        f"\u2705 فایل دریافت شد!\n\n\U0001F3B5 <b>{show_name}</b>\n\n"
-        f"\U0001F3AB سهم امروزت: <b>{remaining}</b>\n"
-        f"\U0001F39B افکت رو انتخاب کن \U0001F447\n"
-        f"\u23F3 اول پیش‌نمایش 30 ثانیه‌ای می‌فرستم",
+        box("دریافت شد ✅", f"🎵 <b>{show_name}</b>\n\nچه سلیقه‌ای 😍",
+            "🎛 حالا یه افکت انتخاب کن 👇\n⏳ اول پیش‌نمایش ۳۰ ثانیه‌ای می‌فرستم"),
         reply_markup=get_buttons(), parse_mode="HTML"
     )
 
@@ -307,25 +369,61 @@ async def handle_music(message: types.Message):
 async def callbacks(callback: types.CallbackQuery):
     data = callback.data or ""
 
-    if data == "show_help":
-        await callback.message.answer(
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-            f"\U0001F3B5 یه فایل بفرست، افکت انتخاب کن، پیش‌نمایش بگیر، بعد نسخه کامل رو دانلود کن.\n\n"
-            f"\U0001F3AB سهم روزانه: <b>30</b>\n"
-            f"راهنمای کامل: /help",
+    if data == "cancel_action":
+        user_files.pop(callback.from_user.id, None)
+        await callback.message.edit_text(
+            box("لغو شد ❌", "همه‌چی پاک شد.", "🎧 یه آهنگ جدید بفرست"),
             parse_mode="HTML"
         )
         await callback.answer()
         return
 
+    if data == "cancel_broadcast":
+        broadcast_wait.discard(callback.from_user.id)
+        await callback.message.edit_text("❌ پیام همگانی لغو شد.", reply_markup=get_admin_panel())
+        await callback.answer()
+        return
+
+    if data == "show_help":
+        await callback.message.answer(box("راهنما 📖",
+            "یه فایل بفرست، افکت انتخاب کن، پیش‌نمایش بگیر، بعد نسخه کامل رو دانلود کن.",
+            "راهنمای کامل: /help"), parse_mode="HTML")
+        await callback.answer()
+        return
+
     if data == "show_effects":
-        await callback.message.answer(
-            f"\U0001F39B <b>افکت‌ها</b>\n{LINE}\n"
-            f"\U0001F40C Slowed\n\U0001F3A7 Slowed + Reverb\n\U0001F303 Nightcore\n"
-            f"\u26A1 Speed Up\n\U0001F50A Bass Boost\n\U0001F30A Reverb\n\U0001F3A9 8D\n"
-            f"{LINE}\n\U0001F447 یه آهنگ بفرست تا امتحانشون کنی",
-            parse_mode="HTML"
-        )
+        await callback.message.answer(box("افکت‌ها 🎛",
+            "🐌 Slowed\n🎧 Slowed + Reverb\n🌃 Nightcore\n⚡️ Speed Up\n🔊 Bass Boost\n🌊 Reverb\n🎩 8D",
+            "👇 یه آهنگ بفرست تا امتحانشون کنی"), parse_mode="HTML")
+        await callback.answer()
+        return
+
+    if data == "show_history":
+        rows = get_history(callback.from_user.id)
+        if not rows:
+            await callback.answer("هنوز آهنگی نفرستادی!", show_alert=True)
+            return
+        await callback.message.answer(box("آهنگ‌های من 🎶", "۵ آهنگ آخرت:", ""),
+            reply_markup=get_history_keyboard(rows), parse_mode="HTML")
+        await callback.answer()
+        return
+
+    if data.startswith("hist_"):
+        rows = get_history(callback.from_user.id)
+        try:
+            idx = int(data.split("_")[1])
+            fid, title, perf, dur, th, fn = rows[idx]
+            user_files[callback.from_user.id] = {
+                "file_id": fid, "title": title, "performer": perf,
+                "duration": dur, "thumb_id": th, "file_name": fn
+            }
+            await callback.message.edit_text(
+                box("دریافت شد ✅", f"🎵 <b>{title or fn}</b>\nاز تاریخچه اومد 👌",
+                    "🎛 حالا یه افکت انتخاب کن 👇"),
+                reply_markup=get_buttons(), parse_mode="HTML"
+            )
+        except:
+            await callback.answer("پیداش نکردم!", show_alert=True)
         await callback.answer()
         return
 
@@ -336,12 +434,10 @@ async def callbacks(callback: types.CallbackQuery):
         if data == "admin_stats":
             total, starts, proc, today = get_stats()
             await callback.message.edit_text(
-                f"\U0001F3A7 <b>Music Effects | Stats</b>\n{LINE}\n"
-                f"\U0001F465 کاربر یکتا: <b>{total}</b>\n"
-                f"\u25B6\uFE0F استارت: <b>{starts}</b>\n"
-                f"\U0001F3A7 کل خروجی: <b>{proc}</b>\n"
-                f"\U0001F4C5 خروجی امروز: <b>{today}</b>\n"
-                f"\U0001F3AB سقف روزانه: <b>{DAILY_LIMIT}</b>\n{LINE}",
+                box("آمار 📊",
+                    f"👥 کاربر یکتا: <b>{total}</b>\n▶️ استارت: <b>{starts}</b>\n"
+                    f"🎧 کل خروجی: <b>{proc}</b>\n📅 خروجی امروز: <b>{today}</b>\n"
+                    f"🎫 سقف روزانه: <b>{DAILY_LIMIT}</b>", ""),
                 reply_markup=get_admin_panel(), parse_mode="HTML"
             )
         elif data == "admin_effects":
@@ -357,29 +453,27 @@ async def callbacks(callback: types.CallbackQuery):
                     em = EFFECT_EMOJI.get(eff, "")
                     lines.append(f"{em} {fa}: <b>{cnt}</b> ({pct}٪)")
                 txt = "\n".join(lines)
-            await callback.message.edit_text(
-                f"\U0001F3AF <b>محبوب‌ترین افکت‌ها</b>\n{LINE}\n{txt}\n{LINE}",
-                reply_markup=get_admin_panel(), parse_mode="HTML"
-            )
+            await callback.message.edit_text(box("محبوب‌ترین‌ها 🎯", txt, ""),
+                reply_markup=get_admin_panel(), parse_mode="HTML")
         elif data == "admin_broadcast":
             broadcast_wait.add(callback.from_user.id)
             await callback.message.edit_text(
-                f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n\U0001F4E3 حالت پیام همگانی فعال شد.\nحالا پیامت رو بفرست.",
-                parse_mode="HTML"
+                box("پیام همگانی 📣", "حالا پیامت رو بفرست (متن، عکس، آهنگ، هرچی)\n\nاگه پشیمون شدی بزن کنسل 👇", ""),
+                reply_markup=get_cancel_keyboard(), parse_mode="HTML"
             )
         await callback.answer()
         return
 
     if data == "back_effects":
         await callback.message.edit_text(
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n\U0001F501 یه افکت دیگه انتخاب کن \U0001F447",
+            box("انتخاب افکت 🎛", "یه افکت دیگه انتخاب کن 👇", ""),
             reply_markup=get_buttons(), parse_mode="HTML"
         )
         await callback.answer()
         return
 
     if data == "new_song":
-        await callback.message.answer("\U0001F3B5 یه آهنگ جدید بفرست \U0001F447")
+        await callback.message.answer("🎧 یه آهنگ جدید بفرست 👇")
         await callback.answer()
         return
 
@@ -398,26 +492,22 @@ async def do_preview(callback: types.CallbackQuery, effect: str):
         return
     if effect not in FILTERS:
         return
-    allowed, remaining = check_limit(user_id)
+    allowed, _ = check_limit(user_id)
     if not allowed:
         await callback.message.edit_text(
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-            f"\U0001F6AB <b>سهم امروزت تموم شد!</b>\n\n"
-            f"فردا دوباره بیا، {DAILY_LIMIT} تا سهم داری \U0001F60C",
+            box("محدودیت روزانه 🚫", "امروز خیلی ترکوندی 😅\nفردا دوباره برگرد، منتظرتم 👋", ""),
             parse_mode="HTML"
         )
         return
-    emoji = EFFECT_EMOJI.get(effect, "\U0001F3A7")
+    emoji = EFFECT_EMOJI.get(effect, "🎧")
     suffix = SUFFIX.get(effect, effect)
     try:
-        await callback.message.edit_text(
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-            f"{emoji} دارم پیش‌نمایش <b>{suffix}</b> رو می‌سازم...\n"
-            f"\U0001F3AB باقی‌مونده امروز: <b>{remaining}</b>",
-            parse_mode="HTML"
-        )
+        await callback.message.edit_text(box("در حال پردازش ⏳", f"{emoji} افکت <b>{suffix}</b>...", ""), parse_mode="HTML")
     except:
         pass
+    status_msg = callback.message
+    stop = asyncio.Event()
+    anim_task = asyncio.create_task(animate_progress(status_msg, emoji, suffix, stop))
     info = user_files[user_id]
     tag = f"{user_id}_{int(time.time())}"
     input_path = f"input_{tag}.mp3"
@@ -430,6 +520,8 @@ async def do_preview(callback: types.CallbackQuery, effect: str):
         cmd = ["ffmpeg", "-y", "-i", input_path, "-t", "30", "-filter:a", FILTERS[effect], "-ar", "44100", "-b:a", "192k", preview_path]
         p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await p.communicate()
+        stop.set()
+        await anim_task
         if not os.path.exists(preview_path) or os.path.getsize(preview_path) == 0:
             await callback.message.edit_text("خطا در پردازش! ffmpeg روی سرور نصب نیست.")
             cleanup(input_path, preview_path, thumb_raw)
@@ -438,14 +530,9 @@ async def do_preview(callback: types.CallbackQuery, effect: str):
         thumb_fixed = await make_thumb(info, tag)
         thumb_file = FSInputFile(thumb_fixed) if thumb_fixed and os.path.exists(thumb_fixed) else None
         inc_usage(user_id, effect)
-        _, rem_after = check_limit(user_id)
-        caption = (
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-            f"{emoji} <b>{new_title}</b>\n\n"
-            f"\u23F3 پیش‌نمایش 30 ثانیه‌ست\n"
-            f"\U0001F3AB باقی‌مونده امروز: <b>{rem_after}</b>\n"
-            f"اگه خوشت اومد نسخه کامل رو بگیر \U0001F447"
-        )
+        caption = box(f"{new_title}",
+            f"{emoji} افکت: <b>{suffix}</b>\n⏳ این فقط ۳۰ ثانیه‌شه...",
+            "اگه حال کردی کاملشو بگیر 👇")
         await callback.message.answer_audio(
             FSInputFile(preview_path, filename=new_filename),
             title=new_title, performer=new_performer, duration=30,
@@ -454,6 +541,11 @@ async def do_preview(callback: types.CallbackQuery, effect: str):
         )
         await callback.message.delete()
     except Exception as e:
+        stop.set()
+        try:
+            await anim_task
+        except:
+            pass
         try:
             await callback.message.edit_text(f"خطا: {e}")
         except:
@@ -469,13 +561,11 @@ async def do_full(callback: types.CallbackQuery, effect: str):
         return
     if effect not in FILTERS:
         return
-    emoji = EFFECT_EMOJI.get(effect, "\U0001F3A7")
+    emoji = EFFECT_EMOJI.get(effect, "🎧")
     suffix = SUFFIX.get(effect, effect)
-    status = await callback.message.reply(
-        f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-        f"{emoji} دارم نسخه کامل <b>{suffix}</b> رو می‌سازم...",
-        parse_mode="HTML"
-    )
+    status = await callback.message.reply(box("در حال پردازش ⏳", f"{emoji} نسخه کامل <b>{suffix}</b>...", ""), parse_mode="HTML")
+    stop = asyncio.Event()
+    anim_task = asyncio.create_task(animate_progress(status, emoji, suffix, stop))
     info = user_files[user_id]
     tag = f"{user_id}_{int(time.time())}_full"
     input_path = f"input_{tag}.mp3"
@@ -488,6 +578,8 @@ async def do_full(callback: types.CallbackQuery, effect: str):
         cmd = ["ffmpeg", "-y", "-i", input_path, "-filter:a", FILTERS[effect], "-ar", "44100", "-b:a", "320k", output_path]
         p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await p.communicate()
+        stop.set()
+        await anim_task
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             await status.edit_text("خطا در پردازش!")
             cleanup(input_path, output_path, thumb_raw)
@@ -498,17 +590,12 @@ async def do_full(callback: types.CallbackQuery, effect: str):
         thumb_fixed = await make_thumb(info, tag)
         thumb_file = FSInputFile(thumb_fixed) if thumb_fixed and os.path.exists(thumb_fixed) else None
         bot_info = await bot.get_me()
-        caption = (
-            f"\U0001F3A7 <b>Music Effects</b>\n{LINE}\n"
-            f"{emoji} <b>{new_title}</b>\n\n"
-            f"\u2705 نسخه کامل آماده شد! enjoy \U0001F60C\n"
-            f"\U0001F916 @{bot_info.username}"
-        )
+        caption = box(f"{new_title}", "✅ نسخه کامل آماده‌ست! حالشو ببر 🔥", f"🤖 @{bot_info.username}")
         await callback.message.answer_audio(
             FSInputFile(output_path, filename=new_filename),
             title=new_title, performer=new_performer, duration=new_duration,
             thumbnail=thumb_file, caption=caption,
-            parse_mode="HTML", reply_markup=get_after_full_buttons()
+            parse_mode="HTML", reply_markup=get_after_full_buttons(bot_info.username)
         )
         await status.delete()
         try:
@@ -516,6 +603,11 @@ async def do_full(callback: types.CallbackQuery, effect: str):
         except:
             pass
     except Exception as e:
+        stop.set()
+        try:
+            await anim_task
+        except:
+            pass
         try:
             await status.edit_text(f"خطا: {e}")
         except:
