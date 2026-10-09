@@ -4,7 +4,7 @@ import sqlite3
 import time
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, BotCommand
 from aiogram.filters import CommandStart, Command
 from aiohttp import web
 
@@ -13,12 +13,12 @@ if not TOKEN:
     raise ValueError("BOT_TOKEN تنظیم نشده است.")
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_ID", "0").split(",") if x.strip().isdigit()]
-DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "30"))
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 user_files = {}
 broadcast_wait = set()
+user_nav = {}
 
 DB = "bot.db"
 con = sqlite3.connect(DB, check_same_thread=False)
@@ -27,8 +27,6 @@ cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, user
 cur.execute("CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER DEFAULT 0)")
 cur.execute("INSERT OR IGNORE INTO stats VALUES ('processed', 0)")
 cur.execute("CREATE TABLE IF NOT EXISTS effect_stats (effect TEXT PRIMARY KEY, count INTEGER DEFAULT 0)")
-cur.execute("CREATE TABLE IF NOT EXISTS daily_usage (user_id INTEGER, date TEXT, count INTEGER DEFAULT 0, PRIMARY KEY(user_id, date))")
-cur.execute("CREATE TABLE IF NOT EXISTS daily_total (date TEXT PRIMARY KEY, count INTEGER DEFAULT 0)")
 cur.execute("""CREATE TABLE IF NOT EXISTS history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER, file_id TEXT, track TEXT, performer TEXT,
@@ -57,9 +55,6 @@ def box(stage, body, footer=""):
         t += f"\n\n{footer}"
     return t
 
-def today_str():
-    return datetime.now().strftime("%Y-%m-%d")
-
 def add_user(u: types.User):
     cur.execute("INSERT OR IGNORE INTO users (user_id, username, name, start_count) VALUES (?,?,?,0)", (u.id, u.username or "", u.first_name or ""))
     cur.execute("UPDATE users SET username=?, name=?, start_count=start_count+1 WHERE user_id=?", (u.username or "", u.first_name or "", u.id))
@@ -72,9 +67,7 @@ def get_stats():
     starts = cur.fetchone()[0] or 0
     cur.execute("SELECT value FROM stats WHERE key='processed'")
     proc = cur.fetchone()[0]
-    cur.execute("SELECT count FROM daily_total WHERE date=?", (today_str(),))
-    row = cur.fetchone()
-    return total, starts, proc, (row[0] if row else 0)
+    return total, starts, proc
 
 def get_all_users():
     cur.execute("SELECT user_id FROM users")
@@ -84,21 +77,7 @@ def get_effect_stats():
     cur.execute("SELECT effect, count FROM effect_stats ORDER BY count DESC")
     return cur.fetchall()
 
-def check_limit(user_id: int):
-    if user_id in ADMIN_IDS:
-        return True, 999
-    d = today_str()
-    cur.execute("SELECT count FROM daily_usage WHERE user_id=? AND date=?", (user_id, d))
-    row = cur.fetchone()
-    used = row[0] if row else 0
-    return used < DAILY_LIMIT, max(DAILY_LIMIT - used, 0)
-
-def inc_usage(user_id: int, effect: str):
-    d = today_str()
-    cur.execute("INSERT OR IGNORE INTO daily_usage (user_id, date, count) VALUES (?,?,0)", (user_id, d))
-    cur.execute("UPDATE daily_usage SET count=count+1 WHERE user_id=? AND date=?", (user_id, d))
-    cur.execute("INSERT OR IGNORE INTO daily_total (date, count) VALUES (?,0)", (d,))
-    cur.execute("UPDATE daily_total SET count=count+1 WHERE date=?", (d,))
+def inc_usage(effect: str):
     cur.execute("UPDATE stats SET value=value+1 WHERE key='processed'")
     cur.execute("INSERT OR IGNORE INTO effect_stats (effect, count) VALUES (?,0)", (effect,))
     cur.execute("UPDATE effect_stats SET count=count+1 WHERE effect=?", (effect,))
@@ -137,11 +116,36 @@ def cleanup(*paths):
         except:
             pass
 
+async def clear_nav(user_id, chat_id, keep_id=None):
+    lst = user_nav.get(user_id, [])
+    for mid in lst:
+        if keep_id and mid == keep_id:
+            continue
+        try:
+            await bot.delete_message(chat_id, mid)
+        except:
+            pass
+    if keep_id:
+        user_nav[user_id] = [keep_id]
+    else:
+        user_nav[user_id] = []
+
+async def nav_push(user_id, msg_id):
+    lst = user_nav.get(user_id, [])
+    lst.append(msg_id)
+    user_nav[user_id] = lst[-5:]
+
+async def try_delete(chat_id, msg_id):
+    try:
+        await bot.delete_message(chat_id, msg_id)
+    except:
+        pass
+
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 راهنما", callback_data="show_help")],
         [InlineKeyboardButton(text="🎧 مشاهده افکت‌ها", callback_data="show_effects")],
-        [InlineKeyboardButton(text="🎶 سوابق من", callback_data="show_history")],
+        [InlineKeyboardButton(text="🎶 آهنگ‌های من", callback_data="show_history")],
     ])
 
 def get_buttons():
@@ -198,72 +202,114 @@ def format_history_text(rows):
         if eff:
             fa = EFFECT_FA.get(eff, eff)
             em = EFFECT_EMOJI.get(eff, "🎧")
-            lines.append(f"{em} <b>{track}</b>\n\n👤 خواننده: {perf}\n\n🎛 افکت: {fa}")
+            lines.append(f"{i}. {em} <b>{track}</b>\n👤 {perf}\n🎛 افکت: {fa}")
         else:
-            lines.append(f"🎵 <b>{track}</b>\n\n👤 خواننده: {perf}\n\n⏳ بدون افکت")
-    return "\n\n🤍\n\n".join(lines)
+            lines.append(f"{i}. 🎵 <b>{track}</b>\n👤 {perf}\n⏳ بدون افکت")
+    return "🎶 <b>آهنگ‌های من</b>\n\n" + "\n\n🤍\n\n".join(lines)
 
-async def make_thumb(info, tag):
-    if not info.get("thumb_id"):
-        return None
+async def extract_cover_from_input(in_path, tag):
+    out = f"thumb_embed_{tag}.jpg"
+    cmd = ["ffmpeg","-y","-i",in_path,"-map","0:v","-vframes","1","-q:v","5",out]
+    p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    await p.communicate()
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        return out
+    cleanup(out)
+    return None
+
+async def make_thumb(info, tag, in_path=None):
     raw = f"thumb_raw_{tag}.jpg"
     fixed = f"thumb_{tag}.jpg"
     try:
-        tfile = await bot.get_file(info["thumb_id"])
-        await bot.download_file(tfile.file_path, raw)
-        cmd = ["ffmpeg","-y","-i",raw,"-vf","scale=320:320:force_original_aspect_ratio=increase,crop=320:320","-q:v","9",fixed]
+        src = None
+        if info.get("thumb_id"):
+            tfile = await bot.get_file(info["thumb_id"])
+            await bot.download_file(tfile.file_path, raw)
+            src = raw
+        elif in_path and os.path.exists(in_path):
+            ext = await extract_cover_from_input(in_path, tag)
+            if ext:
+                cmd = ["ffmpeg","-y","-i",ext,"-vf","scale=320:320:force_original_aspect_ratio=increase,crop=320:320","-q:v","9",fixed]
+                p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await p.communicate()
+                cleanup(ext, raw)
+                if os.path.exists(fixed) and 0 < os.path.getsize(fixed) < 200*1024:
+                    return fixed
+                return None
+            else:
+                return None
+        if not src or not os.path.exists(src):
+            return None
+        cmd = ["ffmpeg","-y","-i",src,"-vf","scale=320:320:force_original_aspect_ratio=increase,crop=320:320","-q:v","9",fixed]
         p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await p.communicate()
         if os.path.exists(fixed) and 0 < os.path.getsize(fixed) < 200*1024:
             cleanup(raw)
             return fixed
-        cmd2 = ["ffmpeg","-y","-i",raw,"-vf","scale=160:160:force_original_aspect_ratio=increase,crop=160:160","-q:v","12",fixed]
-        p2 = await asyncio.create_subprocess_exec(*cmd2, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await p2.communicate()
-        if os.path.exists(fixed) and os.path.getsize(fixed) > 0:
-            cleanup(raw)
-            return fixed
-        return raw if os.path.exists(raw) else None
+        return None
     except:
         return None
 
-async def animate_progress(message: types.Message, emoji: str, suffix: str, stop_event: asyncio.Event):
-    bars = ["▱▱▱▱▱","▰▱▱▱▱","▰▰▱▱▱","▰▰▰▱▱","▰▰▰▰▱","▰▰▰▰▰"]
+async def animate_progress(message: types.Message, effect: str, bitrate: str, stop_event: asyncio.Event):
+    emoji = EFFECT_EMOJI.get(effect, "🎧")
+    fa = EFFECT_FA.get(effect, effect)
+    spinners = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
     i = 0
+    total = 12
     while not stop_event.is_set():
-        bar = bars[i % len(bars)]
+        pct = min(5 + i * 4, 97)
+        filled = int(pct / 100 * total)
+        bar = "▰" * filled + "▱" * (total - filled)
+        spin = spinners[i % len(spinners)]
+        txt = (
+            f"{emoji} <b>در حال ساخت آهنگ...</b> {spin}\n\n"
+            f"<blockquote>🎛 افکت: <b>{fa}</b>\n"
+            f"📀 کیفیت: <b>{bitrate}kbps</b></blockquote>\n\n"
+            f"{bar}  <b>{pct}٪</b>\n\n"
+            f"🎶 لطفا صبر کنید، پردازش نزدیک است..."
+        )
         try:
-            await message.edit_text(f"{emoji} در حال پردازش... {suffix}\n{bar}")
+            await message.edit_text(txt, parse_mode="HTML")
         except:
             pass
         i += 1
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(0.6)
+    try:
+        full = "▰" * total
+        await message.edit_text(
+            f"✅ <b>تکمیل شد!</b> 🎉\n\n{full}  <b>۱۰۰٪</b>\n\n🎧 در حال ارسال...",
+            parse_mode="HTML")
+    except:
+        pass
 
-async def process_effect(chat_id, status_msg, user_id, info, effect, bitrate):
+async def process_effect(chat_id, user_id, status_msg, info, effect, bitrate):
     tag = f"{user_id}_{int(time.time())}"
     in_path = f"in_{tag}.mp3"
     out_path = f"out_{tag}.mp3"
     thumb_path = None
     raw_thumb = f"thumb_raw_{tag}.jpg"
+    embed_thumb = f"thumb_embed_{tag}.jpg"
     stop = asyncio.Event()
-    anim = asyncio.create_task(animate_progress(status_msg, EFFECT_EMOJI.get(effect, "🎧"), EFFECT_FA.get(effect, effect), stop))
+    anim = asyncio.create_task(animate_progress(status_msg, effect, bitrate, stop))
     try:
         f = await bot.get_file(info["file_id"])
         await bot.download_file(f.file_path, in_path)
-        thumb_path = await make_thumb(info, tag)
+        thumb_path = await make_thumb(info, tag, in_path)
         filt = FILTERS[effect]
         if thumb_path and os.path.exists(thumb_path):
             cmd = ["ffmpeg","-y","-i",in_path,"-i",thumb_path,
                    "-filter:a",filt,
-                   "-map","0:a","-map","1",
+                   "-map","0:a","-map","1:v",
                    "-c:a","libmp3lame","-b:a",f"{bitrate}k",
                    "-c:v","mjpeg",
-                   "-id3v2_version","3",
-                   "-metadata:s:v","title=Album cover",
-                   "-metadata:s:v","comment=Cover (front)",
+                   "-disposition:v","attached_pic",
+                   "-id3v2_version","3","-write_id3v2","1",
                    out_path]
         else:
-            cmd = ["ffmpeg","-y","-i",in_path,"-filter:a",filt,"-c:a","libmp3lame","-b:a",f"{bitrate}k",out_path]
+            cmd = ["ffmpeg","-y","-i",in_path,"-filter:a",filt,
+                   "-c:a","libmp3lame","-b:a",f"{bitrate}k",
+                   "-id3v2_version","3",
+                   out_path]
         p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await p.communicate()
         if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
@@ -275,14 +321,16 @@ async def process_effect(chat_id, status_msg, user_id, info, effect, bitrate):
         title, performer, fname = build_names(info, effect)
         dur = int((info.get("duration") or 0) * DURATION_FACTOR.get(effect, 1.0))
         me = await bot.get_me()
-        inc_usage(user_id, effect)
+        inc_usage(effect)
         set_last_effect(user_id, effect)
         stop.set()
         await anim
+        await asyncio.sleep(0.5)
         try:
             await status_msg.delete()
         except:
             pass
+        await clear_nav(user_id, chat_id)
         audio = FSInputFile(out_path, filename=fname)
         thumb = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
         await bot.send_audio(chat_id, audio=audio, title=title, performer=performer,
@@ -300,14 +348,57 @@ async def process_effect(chat_id, status_msg, user_id, info, effect, bitrate):
         except:
             pass
     finally:
-        cleanup(in_path, out_path, thumb_path, raw_thumb)
+        cleanup(in_path, out_path, thumb_path, raw_thumb, embed_thumb, f"thumb_{tag}.jpg")
+
+async def send_history(user_id, chat_id):
+    rows = get_history(user_id)
+    if not rows:
+        m = await bot.send_message(chat_id, "🎶 هنوز آهنگی نفرستادی. یه موزیک بفرست تا اینجا ذخیره بشه.")
+        await nav_push(user_id, m.message_id)
+        return
+    await clear_nav(user_id, chat_id)
+    m = await bot.send_message(chat_id, format_history_text(rows), reply_markup=build_history_keyboard(rows), parse_mode="HTML")
+    await nav_push(user_id, m.message_id)
 
 @dp.message(CommandStart())
 async def cmd_start(m: types.Message):
     add_user(m.from_user)
-    ok, left = check_limit(m.from_user.id)
-    await m.answer(box("🎧 خوش آمدید!", f"سلام {m.from_user.first_name} 👋\n\nیک فایل موزیک بفرست تا افکت بزنم.\n\n🎶 سهمیه امروز: {left} / {DAILY_LIMIT}", "👇 از دکمه‌ها استفاده کن:"),
+    await clear_nav(m.from_user.id, m.chat.id)
+    msg = await m.answer(box("🎧 خوش آمدید!", f"سلام {m.from_user.first_name} 👋\n\nیک فایل موزیک بفرست تا افکت بزنم.\n\n🚀 بدون محدودیت! هرچقدر خواستی بساز.", "👇 از دکمه‌ها یا کامندها استفاده کن:"),
         reply_markup=get_start_keyboard(), parse_mode="HTML")
+    await nav_push(m.from_user.id, msg.message_id)
+
+@dp.message(Command("help"))
+async def cmd_help(m: types.Message):
+    await clear_nav(m.from_user.id, m.chat.id)
+    msg = await m.answer(box("📖 راهنما", "1️⃣ یک موزیک بفرست\n2️⃣ افکت را انتخاب کن\n3️⃣ کیفیت را انتخاب کن\n\n⏳ بعد چند ثانیه فایل نهایی را می‌گیری.\n\n📌 کامندها:\n/start شروع\n/mysongs آهنگ‌های من\n/effects افکت‌ها\n/help راهنما"), parse_mode="HTML")
+    await nav_push(m.from_user.id, msg.message_id)
+
+@dp.message(Command("mysongs"))
+async def cmd_mysongs(m: types.Message):
+    await send_history(m.from_user.id, m.chat.id)
+
+@dp.message(Command("history"))
+async def cmd_history(m: types.Message):
+    await send_history(m.from_user.id, m.chat.id)
+
+@dp.message(Command("songs"))
+async def cmd_songs(m: types.Message):
+    await send_history(m.from_user.id, m.chat.id)
+
+@dp.message(Command("effects"))
+async def cmd_effects(m: types.Message):
+    if m.from_user.id not in user_files:
+        rows = get_history(m.from_user.id)
+        if rows:
+            hid, fid, track, perf, fn, th, dur, eff = rows[0]
+            user_files[m.from_user.id] = {"file_id": fid, "title": track, "performer": perf, "file_name": fn or "music.mp3", "thumb_id": th or None, "duration": dur or 0}
+        else:
+            await m.answer("اول یک موزیک بفرست 🎧")
+            return
+    await clear_nav(m.from_user.id, m.chat.id)
+    msg = await m.answer("🎛 یک افکت انتخاب کن:", reply_markup=get_buttons())
+    await nav_push(m.from_user.id, msg.message_id)
 
 @dp.message(Command("admin"))
 async def cmd_admin(m: types.Message):
@@ -319,8 +410,8 @@ async def cmd_admin(m: types.Message):
 async def cmd_stats(m: types.Message):
     if m.from_user.id not in ADMIN_IDS:
         return
-    total, starts, proc, today = get_stats()
-    await m.answer(box("📊 آمار کلی", f"👥 کاربران: {total}\n🚀 استارت‌ها: {starts}\n🎧 پردازش‌ها: {proc}\n📅 امروز: {today}"), parse_mode="HTML")
+    total, starts, proc = get_stats()
+    await m.answer(box("📊 آمار کلی", f"👥 کاربران: {total}\n🚀 استارت‌ها: {starts}\n🎧 پردازش‌ها: {proc}"), parse_mode="HTML")
 
 @dp.message(F.audio | F.document)
 async def on_music(m: types.Message):
@@ -342,10 +433,6 @@ async def on_music(m: types.Message):
     if m.document and not (m.document.mime_type or "").startswith("audio"):
         await m.answer("⚠️ لطفا فقط فایل صوتی / موزیک بفرستید.")
         return
-    ok, left = check_limit(m.from_user.id)
-    if not ok:
-        await m.answer(box("⛔️ محدودیت روزانه", f"سهمیه امروزت تمام شد ({DAILY_LIMIT} عدد).\n\nفردا دوباره تلاش کن."), parse_mode="HTML")
-        return
     info = {
         "file_id": file.file_id,
         "title": getattr(file, "title", None) or (m.audio.title if m.audio else None),
@@ -356,11 +443,15 @@ async def on_music(m: types.Message):
     }
     if m.audio and m.audio.thumbnail:
         info["thumb_id"] = m.audio.thumbnail.file_id
+    elif m.document and m.document.thumbnail:
+        info["thumb_id"] = m.document.thumbnail.file_id
     if not info["title"]:
         info["title"] = os.path.splitext(info["file_name"])[0]
     user_files[m.from_user.id] = info
     add_history(m.from_user.id, info)
-    await m.answer(box("🎵 فایل دریافت شد", f"<b>{info['title']}</b>\n👤 {info['performer'] or 'نامشخص'}\n\n🎛 حالا یک افکت انتخاب کن:", f"🎶 باقی‌مانده امروز: {left}"), reply_markup=get_buttons(), parse_mode="HTML")
+    await clear_nav(m.from_user.id, m.chat.id)
+    msg = await m.answer(box("🎵 فایل دریافت شد", f"<b>{info['title']}</b>\n👤 {info['performer'] or 'نامشخص'}\n\n🎛 حالا یک افکت انتخاب کن:"), reply_markup=get_buttons(), parse_mode="HTML")
+    await nav_push(m.from_user.id, msg.message_id)
 
 @dp.message(F.text)
 async def on_text(m: types.Message):
@@ -378,11 +469,16 @@ async def on_text(m: types.Message):
             await asyncio.sleep(0.05)
         await m.answer(f"✅ تمام شد.\nموفق: {ok}\nناموفق: {fail}")
         return
+    if m.text.startswith("/"):
+        return
     await m.answer("🎧 یک فایل موزیک بفرست تا شروع کنیم.", reply_markup=get_start_keyboard())
 
 @dp.callback_query(F.data == "show_help")
 async def cb_help(c: types.CallbackQuery):
-    await c.message.answer(box("📖 راهنما", "1️⃣ یک موزیک بفرست\n2️⃣ افکت را انتخاب کن\n3️⃣ کیفیت را انتخاب کن\n\n⏳ بعد چند ثانیه فایل نهایی را می‌گیری."), parse_mode="HTML")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer(box("📖 راهنما", "1️⃣ یک موزیک بفرست\n2️⃣ افکت را انتخاب کن\n3️⃣ کیفیت را انتخاب کن\n\n⏳ بعد چند ثانیه فایل نهایی را می‌گیری."), parse_mode="HTML")
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data == "show_effects")
@@ -395,26 +491,32 @@ async def cb_show_fx(c: types.CallbackQuery):
         else:
             await c.answer("اول یک موزیک بفرست 🎧", show_alert=True)
             return
-    await c.message.answer("🎛 یک افکت انتخاب کن:", reply_markup=get_buttons())
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer("🎛 یک افکت انتخاب کن:", reply_markup=get_buttons())
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data == "show_history")
 async def cb_history(c: types.CallbackQuery):
-    rows = get_history(c.from_user.id)
-    if not rows:
-        await c.answer("تاریخچه‌ای نداری 🎶", show_alert=True)
-        return
-    await c.message.answer(format_history_text(rows), reply_markup=build_history_keyboard(rows), parse_mode="HTML")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await send_history(c.from_user.id, c.message.chat.id)
     await c.answer()
 
 @dp.callback_query(F.data == "back_effects")
 async def cb_back(c: types.CallbackQuery):
-    await c.message.answer("🎛 یک افکت انتخاب کن:", reply_markup=get_buttons())
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer("🎛 یک افکت انتخاب کن:", reply_markup=get_buttons())
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data == "new_song")
 async def cb_new(c: types.CallbackQuery):
-    await c.message.answer("🎧 یک فایل موزیک جدید بفرست.")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer("🎧 یک فایل موزیک جدید بفرست.")
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data == "cancel_action")
@@ -434,7 +536,10 @@ async def cb_prev(c: types.CallbackQuery):
     if c.from_user.id not in user_files:
         await c.answer("فایل پیدا نشد! دوباره موزیک بفرست.", show_alert=True)
         return
-    await c.message.answer(f"{EFFECT_EMOJI.get(effect,'🎧')} افکت <b>{EFFECT_FA.get(effect, effect)}</b>\n\nکیفیت خروجی را انتخاب کن:", reply_markup=get_quality_keyboard(effect), parse_mode="HTML")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer(f"{EFFECT_EMOJI.get(effect,'🎧')} افکت <b>{EFFECT_FA.get(effect, effect)}</b>\n\nکیفیت خروجی را انتخاب کن:", reply_markup=get_quality_keyboard(effect), parse_mode="HTML")
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data.startswith("go_"))
@@ -448,14 +553,12 @@ async def cb_go(c: types.CallbackQuery):
     if c.from_user.id not in user_files:
         await c.answer("فایل پیدا نشد! دوباره بفرست.", show_alert=True)
         return
-    ok, left = check_limit(c.from_user.id)
-    if not ok:
-        await c.answer("سهمیه امروز تمام شد ⛔️", show_alert=True)
-        return
     info = user_files[c.from_user.id]
-    status = await c.message.answer(f"{EFFECT_EMOJI.get(effect,'🎧')} در حال پردازش... {EFFECT_FA.get(effect, effect)}\n▱▱▱▱▱")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    status = await c.message.answer(f"{EFFECT_EMOJI.get(effect,'🎧')} در حال شروع پردازش...", parse_mode="HTML")
     await c.answer()
-    await process_effect(c.message.chat.id, status, c.from_user.id, info, effect, bitrate)
+    await process_effect(c.message.chat.id, c.from_user.id, status, info, effect, bitrate)
 
 @dp.callback_query(F.data.startswith("hist_"))
 async def cb_hist(c: types.CallbackQuery):
@@ -467,15 +570,18 @@ async def cb_hist(c: types.CallbackQuery):
         return
     fid, track, perf, fn, th, dur = row
     user_files[c.from_user.id] = {"file_id": fid, "title": track, "performer": perf, "file_name": fn or "music.mp3", "thumb_id": th or None, "duration": dur or 0}
-    await c.message.answer(f"🎵 <b>{track}</b>\n👤 {perf}\n\nحالا افکت انتخاب کن:", reply_markup=get_buttons(), parse_mode="HTML")
+    await try_delete(c.message.chat.id, c.message.message_id)
+    await clear_nav(c.from_user.id, c.message.chat.id)
+    msg = await c.message.answer(f"🎵 <b>{track}</b>\n👤 {perf}\n\nحالا افکت انتخاب کن:", reply_markup=get_buttons(), parse_mode="HTML")
+    await nav_push(c.from_user.id, msg.message_id)
     await c.answer()
 
 @dp.callback_query(F.data == "admin_stats")
 async def cb_astats(c: types.CallbackQuery):
     if c.from_user.id not in ADMIN_IDS:
         return
-    total, starts, proc, today = get_stats()
-    await c.message.answer(box("📊 آمار کلی", f"👥 کاربران: {total}\n🚀 استارت‌ها: {starts}\n🎧 پردازش‌ها: {proc}\n📅 امروز: {today}"), parse_mode="HTML")
+    total, starts, proc = get_stats()
+    await c.message.answer(box("📊 آمار کلی", f"👥 کاربران: {total}\n🚀 استارت‌ها: {starts}\n🎧 پردازش‌ها: {proc}"), parse_mode="HTML")
     await c.answer()
 
 @dp.callback_query(F.data == "admin_effects")
@@ -516,9 +622,21 @@ async def start_web():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+async def setup_commands():
+    await bot.set_my_commands([
+        BotCommand(command="start", description="🎧 شروع"),
+        BotCommand(command="mysongs", description="🎶 آهنگ‌های من"),
+        BotCommand(command="effects", description="🎛 افکت‌ها"),
+        BotCommand(command="help", description="📖 راهنما"),
+    ])
+
 async def main():
     try:
         await start_web()
+    except:
+        pass
+    try:
+        await setup_commands()
     except:
         pass
     print("Bot started...")
